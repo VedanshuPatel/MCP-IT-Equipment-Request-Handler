@@ -2,18 +2,18 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 4, `get_policy_limits`._
+_Last updated: Phase 5, `check_request_eligibility`._
 
 ## Current state
 
-The MCP server has two real tools, `get_employee_info` and `get_policy_limits`, plus `ping`. Each layer depends only on the one below it:
+The MCP server has three real tools, `get_employee_info`, `get_policy_limits` and `check_request_eligibility`, plus `ping`. Each layer depends only on the one below it:
 
 ```
 scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; DomainError → ToolError
    (mcp.Client)                      │
                                      ▼
                                    tools.py      EquipmentTools facade: business logic, clock injected
-                                     │
+                                     │      └──► rules.py  eligibility rule chain E1 → E6 (first match wins)
                                      ▼
                                    repositories.py  Employee and Policy repository protocols + JSON implementations
                                      │
@@ -26,9 +26,10 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Requirements | `docs/REQUIREMENTS.md` | The testable rules that every later phase implements |
 | Settings | `src/it_equipment/config.py` | `ServerSettings` (validated host, port, path), `mcp_server_url()`, `data_dir()` |
 | Models | `src/it_equipment/models.py` | Pydantic models: employees (`Employee`, `EmployeeInfo`), policies (`PolicyTable`, `ItemPolicy`, `PolicyLimits`); validate the data and define tool output |
-| Errors | `src/it_equipment/errors.py` | `DomainError` subclasses with stable codes (`INVALID_EMPLOYEE_ID`, `EMPLOYEE_NOT_FOUND`, `UNKNOWN_ROLE`) |
+| Errors | `src/it_equipment/errors.py` | `DomainError` subclasses with stable codes (`INVALID_EMPLOYEE_ID`, `EMPLOYEE_NOT_FOUND`, `UNKNOWN_ROLE`, `INVALID_INPUT`) |
 | Repositories | `src/it_equipment/repositories.py` | `EmployeeRepository` and `PolicyRepository` protocols, with JSON implementations for `data/employees.json` and `data/policies.json` |
-| Tools | `src/it_equipment/tools.py` | `EquipmentTools.get_employee_info` and `.get_policy_limits`, plus ID normalization and tenure; no MCP code |
+| Rules | `src/it_equipment/rules.py` | One class per eligibility rule (E1 to E6), `DEFAULT_RULES` in order, `evaluate()` (first decision wins), `add_years()` |
+| Tools | `src/it_equipment/tools.py` | `EquipmentTools.get_employee_info`, `.get_policy_limits` and `.check_request_eligibility`, plus ID normalization and tenure; no MCP code |
 | MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers; `main()` serves Streamable HTTP |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
 | Clients | `scripts/smoke_client.py`, `scripts/hello_client.py` | Manual checks: `get_employee_info` for given IDs; `ping` |
@@ -67,3 +68,5 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-014 | 2026-11-24 | Tools raise `DomainError` with a stable code; the server converts it to the SDK's `ToolError` | The client gets `is_error` with the code in the text, while unexpected crashes stay hidden from it |
 | AD-015 | 2026-11-24 | Mock data is validated by Pydantic once, when the repository loads | Bad data stops the server at startup instead of failing during a request |
 | AD-016 | 2026-11-24 | The policy table is data (`data/policies.json`) validated as a whole: every role must cover exactly the catalog, and an eligible item needs an interval | A new role or item is a data change only, and an incomplete table fails at startup instead of giving a wrong answer later |
+| AD-017 | 2026-11-24 | Eligibility is a chain of small rule classes (Strategy), applied in order until one decides | Each rule maps one-to-one to REQUIREMENTS E1 to E6 and is easy to read and test; a new rule is one class added to the list |
+| AD-018 | 2026-11-24 | An unknown employee or item returns `needs_review` instead of an error; a role missing from the policy table raises `UNKNOWN_ROLE` | The first two are normal requests a human should see; the last is broken data that must not produce a decision |

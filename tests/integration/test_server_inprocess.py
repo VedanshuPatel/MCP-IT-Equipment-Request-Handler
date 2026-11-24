@@ -93,3 +93,35 @@ async def test_unknown_role_is_a_tool_error_carrying_the_code(tools):
 
     assert result.is_error
     assert "UNKNOWN_ROLE:" in result.content[0].text
+
+
+async def test_check_request_eligibility_returns_structured_decision(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool(
+            "check_request_eligibility", {"employee_id": "E003", "item": "monitor"}
+        )
+
+    assert not result.is_error
+    assert result.structured_content["status"] == "not_eligible"
+    assert result.structured_content["reason_code"] == "LIMIT_REACHED"
+    assert result.structured_content["next_eligible_date"] == "2028-11-03"
+
+
+async def test_unknown_employee_eligibility_is_needs_review_not_an_error(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool(
+            "check_request_eligibility", {"employee_id": "E999", "item": "laptop"}
+        )
+
+    assert not result.is_error
+    assert result.structured_content["status"] == "needs_review"
+
+
+async def test_empty_item_is_a_tool_error_carrying_the_code(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool(
+            "check_request_eligibility", {"employee_id": "E002", "item": ""}
+        )
+
+    assert result.is_error
+    assert "INVALID_INPUT:" in result.content[0].text

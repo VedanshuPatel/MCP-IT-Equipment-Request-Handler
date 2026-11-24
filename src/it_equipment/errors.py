@@ -39,3 +39,9 @@ class UnknownRoleError(DomainError):
     """The role is not in the policy table."""
 
     code = "UNKNOWN_ROLE"
+
+
+class InvalidInputError(DomainError):
+    """An argument is empty, too long or otherwise unusable."""
+
+    code = "INVALID_INPUT"

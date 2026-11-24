@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `check_request_eligibility` MCP tool: decides `eligible`, `not_eligible` or `needs_review` with a reason code (`NEW_ALLOCATION`, `REFRESH_DUE`, `LIMIT_REACHED`, `ROLE_NOT_ELIGIBLE`, `UNKNOWN_ITEM`, `EMPLOYEE_NOT_FOUND`), the units held, the role's limit, the next eligible date and a plain-English message; `INVALID_INPUT` error for an empty item.
+- Eligibility rule chain (`rules.py`): one class per rule E1 to E6, applied in order; due dates handle 29 February.
+
 - `get_policy_limits` MCP tool: for a role, the maximum quantity, replacement interval and eligibility of every catalog item; roles are case- and space-insensitive; `UNKNOWN_ROLE` error.
 - Policy table (`data/policies.json`) with a `PolicyRepository` protocol and JSON implementation; the table is validated at startup (every role covers exactly the catalog).
 

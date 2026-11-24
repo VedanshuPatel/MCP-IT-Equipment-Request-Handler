@@ -12,8 +12,14 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from it_equipment.errors import EmployeeNotFoundError, InvalidEmployeeIdError, UnknownRoleError
-from it_equipment.models import EmployeeInfo, ItemLimit, PolicyLimits
+from it_equipment import rules
+from it_equipment.errors import (
+    EmployeeNotFoundError,
+    InvalidEmployeeIdError,
+    InvalidInputError,
+    UnknownRoleError,
+)
+from it_equipment.models import EligibilityResult, EmployeeInfo, ItemLimit, PolicyLimits
 from it_equipment.repositories import (
     EmployeeRepository,
     JsonEmployeeRepository,
@@ -142,3 +148,42 @@ class EquipmentTools:
             for item in self._policies.catalog()
         ]
         return PolicyLimits(role=normalized, items=items)
+
+    def check_request_eligibility(self, employee_id: str, item: str) -> EligibilityResult:
+        """Decide whether the employee may receive one unit of the item today.
+
+        Applies rules E1 to E6 (REQUIREMENTS section 5). An unknown employee or item is not
+        an error: it returns ``needs_review`` so the agent escalates.
+
+        Args:
+            employee_id: The employee; case and surrounding spaces are ignored.
+            item: The catalog item; case and surrounding spaces are ignored.
+
+        Returns:
+            The decision, with the rule's reason code and the facts behind it.
+
+        Raises:
+            InvalidEmployeeIdError: If the ID is malformed.
+            InvalidInputError: If the item is empty.
+            UnknownRoleError: If the employee's role is missing from the policy table
+                (a data error).
+        """
+        normalized_id = normalize_employee_id(employee_id)
+        normalized_item = item.strip().lower()
+        if not normalized_item:
+            raise InvalidInputError("item must not be empty")
+        employee = self._employees.get(normalized_id)
+        limits = None
+        if employee is not None:
+            limits = self._policies.limits_for(employee.role)
+            if limits is None:
+                raise UnknownRoleError(f"no policy for role {employee.role!r}")
+        context = rules.EligibilityContext(
+            employee_id=normalized_id,
+            item=normalized_item,
+            employee=employee,
+            limits=limits,
+            catalog=self._policies.catalog(),
+            today=self._clock(),
+        )
+        return rules.evaluate(context)

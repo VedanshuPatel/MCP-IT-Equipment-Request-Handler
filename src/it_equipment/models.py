@@ -5,7 +5,7 @@ return, so the MCP output schema comes straight from these classes.
 """
 
 from datetime import date
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -97,3 +97,34 @@ class PolicyLimits(BaseModel):
 
     role: str = Field(description="Normalized role, for example 'manager'.")
     items: list[ItemLimit] = Field(description="One entry per catalog item, in catalog order.")
+
+
+#: Outcome of an eligibility check (REQUIREMENTS 4.3).
+EligibilityStatus = Literal["eligible", "not_eligible", "needs_review"]
+
+#: The rule that decided an eligibility check (REQUIREMENTS section 5).
+ReasonCode = Literal[
+    "EMPLOYEE_NOT_FOUND",
+    "UNKNOWN_ITEM",
+    "ROLE_NOT_ELIGIBLE",
+    "NEW_ALLOCATION",
+    "REFRESH_DUE",
+    "LIMIT_REACHED",
+]
+
+
+class EligibilityResult(BaseModel):
+    """Result of ``check_request_eligibility`` (REQUIREMENTS 4.3)."""
+
+    status: EligibilityStatus
+    reason_code: ReasonCode = Field(description="The rule that decided (REQUIREMENTS 5).")
+    employee_id: str = Field(description="Normalized employee ID.")
+    item: str = Field(description="Normalized item name.")
+    held: int | None = Field(default=None, description="Units on file; null when unknown.")
+    max_quantity: int | None = Field(
+        default=None, description="The role's limit for the item; null when unknown."
+    )
+    next_eligible_date: date | None = Field(
+        default=None, description="LIMIT_REACHED only: when a replacement becomes possible."
+    )
+    message: str = Field(description="One plain-English sentence explaining the result.")
