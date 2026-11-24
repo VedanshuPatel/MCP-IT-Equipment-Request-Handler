@@ -20,7 +20,7 @@ from pydantic import Field
 from it_equipment import __version__
 from it_equipment.config import ServerSettings, data_dir
 from it_equipment.errors import DomainError
-from it_equipment.models import EmployeeInfo, PolicyLimits
+from it_equipment.models import EligibilityResult, EmployeeInfo, PolicyLimits
 from it_equipment.tools import EquipmentTools
 
 SERVER_NAME = "it-equipment"
@@ -30,6 +30,9 @@ EmployeeIdArg = Annotated[
 ]
 RoleArg = Annotated[
     str, Field(description="Role name, for example 'manager'; returned by get_employee_info.")
+]
+ItemArg = Annotated[
+    str, Field(description="Catalog item requested: laptop, monitor, headset or keyboard.")
 ]
 
 
@@ -85,6 +88,16 @@ def create_server(tools: EquipmentTools | None = None) -> MCPServer:
         """List what a role is eligible for: maximum quantity and replacement interval per item."""
         with _as_tool_error():
             return tools.get_policy_limits(role)
+
+    @server.tool()
+    def check_request_eligibility(employee_id: EmployeeIdArg, item: ItemArg) -> EligibilityResult:
+        """Check whether the employee may receive one unit of the item today under policy.
+
+        Returns eligible, not_eligible or needs_review, with a reason code. An unknown
+        employee or item returns needs_review, which means a human must decide.
+        """
+        with _as_tool_error():
+            return tools.check_request_eligibility(employee_id, item)
 
     return server
 
