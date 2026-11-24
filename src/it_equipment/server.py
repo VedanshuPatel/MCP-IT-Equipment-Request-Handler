@@ -2,16 +2,32 @@
 
 Start it with ``python -m it_equipment.server``. It serves the MCP protocol over Streamable
 HTTP at ``http://MCP_HOST:MCP_PORT/mcp`` (default ``http://127.0.0.1:8000/mcp``).
+
+Each MCP tool here is a thin wrapper: it calls the matching ``EquipmentTools`` method and
+turns domain errors into MCP tool errors. The business logic lives in ``tools.py``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import Annotated
+
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import Field
 
 from it_equipment import __version__
-from it_equipment.config import ServerSettings
+from it_equipment.config import ServerSettings, data_dir
+from it_equipment.errors import DomainError
+from it_equipment.models import EmployeeInfo
+from it_equipment.tools import EquipmentTools
 
 SERVER_NAME = "it-equipment"
+
+EmployeeIdArg = Annotated[
+    str, Field(description="Employee ID: 'E' followed by 3 digits, for example 'E002'.")
+]
 
 
 def ping() -> str:
@@ -23,19 +39,44 @@ def ping() -> str:
     return "pong"
 
 
-def create_server() -> MCPServer:
+@contextmanager
+def _as_tool_error() -> Generator[None, None, None]:
+    """Re-raise a ``DomainError`` as an MCP ``ToolError``, keeping its ``CODE: message`` text.
+
+    A ``ToolError`` is reported to the client as ``is_error=True`` with that text, while any
+    other exception is treated as a crash and its details are hidden from the client.
+    """
+    try:
+        yield
+    except DomainError as exc:
+        raise ToolError(str(exc)) from exc
+
+
+def create_server(tools: EquipmentTools | None = None) -> MCPServer:
     """Build the MCP server and register its tools.
+
+    Args:
+        tools: The tool implementations. Defaults to tools backed by the JSON files in
+            ``DATA_DIR``; tests pass their own, for example with a fixed date.
 
     Returns:
         A configured server that is not running yet. Tests connect to it in-process;
         ``main`` serves it over HTTP.
     """
+    tools = tools or EquipmentTools.from_data_dir(data_dir())
     server = MCPServer(
         name=SERVER_NAME,
         version=__version__,
         instructions="Tools for checking IT equipment requests against company policy.",
     )
     server.tool()(ping)
+
+    @server.tool()
+    def get_employee_info(employee_id: EmployeeIdArg) -> EmployeeInfo:
+        """Look up an employee's role, tenure and current equipment on file."""
+        with _as_tool_error():
+            return tools.get_employee_info(employee_id)
+
     return server
 
 
