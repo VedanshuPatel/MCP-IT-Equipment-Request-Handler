@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 0, project setup. See [CHANGELOG.md](CHANGELOG.md) for what has been built so far.
+> **Status:** Phase 1, requirements. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -52,7 +52,7 @@ pytest                  # tests + coverage gate (85%)
 ```
 .
 ├── .github/workflows/ci.yml   CI pipeline
-├── docs/                      ARCHITECTURE.md
+├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
 ├── src/it_equipment/          application package
 ├── tests/unit/                unit tests
 ├── .env.example               configuration template
@@ -80,6 +80,7 @@ Each phase is built on its own branch, test-first:
 
 ## Documentation
 
+- [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md): policy rules, tool contracts, decision rules, guardrails and acceptance criteria
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): what is built so far, and key decisions
 - [CHANGELOG.md](CHANGELOG.md): notable changes
 - [SCOPE.md](SCOPE.md): lab brief
