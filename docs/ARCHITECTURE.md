@@ -2,17 +2,26 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 1, requirements._
+_Last updated: Phase 2, MCP server skeleton._
 
 ## Current state
 
-The project skeleton and the requirements exist. No server or agent code yet.
+An MCP server with one trivial tool (`ping`) runs over Streamable HTTP. The business tools and the agent come next.
+
+```
+scripts/hello_client.py ──HTTP──►  http://127.0.0.1:8000/mcp
+   (mcp.Client)                    server.py: create_server() → MCPServer + ping
+                                   config.py: ServerSettings (MCP_HOST, MCP_PORT)
+```
 
 | Component | Path | Purpose |
 |---|---|---|
 | Requirements | `docs/REQUIREMENTS.md` | The testable rules that every later phase implements |
-| Package | `src/it_equipment/` | Application code (only the package version so far) |
-| Tests | `tests/unit/` | Smoke tests for the package |
+| Settings | `src/it_equipment/config.py` | `ServerSettings` (validated host, port, path) and `mcp_server_url()` |
+| MCP server | `src/it_equipment/server.py` | `create_server()` builds the server and registers tools; `main()` serves it over Streamable HTTP |
+| Hello client | `scripts/hello_client.py` | Manual check: lists the tools and calls `ping` |
+| Unit tests | `tests/unit/` | Package, settings and server module, no network |
+| Integration tests | `tests/integration/` | In-process MCP client tests, and end-to-end tests against the real server process |
 | CI | `.github/workflows/ci.yml` | Lint, format check and tests on Python 3.12 and 3.15 |
 | Config template | `.env.example` | Every setting planned across the phases |
 
@@ -40,3 +49,5 @@ The project skeleton and the requirements exist. No server or agent code yet.
 | AD-008 | 2026-11-24 | Eligibility is decided by deterministic server code; the LLM gathers evidence and writes the response | Policy outcomes are testable and repeatable, and the model cannot talk itself into an approval |
 | AD-009 | 2026-11-24 | Fail closed: anything the rules cannot decide is escalated with a ticket | A wrong approval costs more than a human review |
 | AD-010 | 2026-11-24 | `check_request_eligibility` keeps the SCOPE signature `(employee_id, item)`; an extra unit and an early replacement both return `LIMIT_REACHED` with `next_eligible_date` | Matches the brief exactly; the employee still learns when a replacement becomes possible |
+| AD-011 | 2026-11-24 | A `create_server()` factory builds the server; `main()` only runs it | Tests get a fresh server and connect in-process (`mcp.Client(server)`), with no network or global state |
+| AD-012 | 2026-11-24 | Settings refuse any non-loopback `MCP_HOST`; the SDK's DNS-rebinding protection stays on and is tested | The server has no authentication, so it must not be reachable from other machines or from web pages (requirement N1) |

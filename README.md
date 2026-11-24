@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 1, requirements. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 2, MCP server skeleton (a `ping` tool over Streamable HTTP). The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -47,14 +47,33 @@ ruff format --check .   # formatting
 pytest                  # tests + coverage gate (85%)
 ```
 
+### Run the MCP server
+
+```bash
+python -m it_equipment.server      # terminal 1: serves http://127.0.0.1:8000/mcp
+python scripts/hello_client.py     # terminal 2: lists the tools and calls ping
+```
+
+Expected client output:
+
+```
+Connected to http://127.0.0.1:8000/mcp
+Tools: ping
+ping -> pong
+```
+
+`MCP_HOST` and `MCP_PORT` set where the server listens (loopback addresses only), and `MCP_SERVER_URL` sets where the client connects. See `.env.example`.
+
 ## Project layout
 
 ```
 .
 ├── .github/workflows/ci.yml   CI pipeline
 ├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
-├── src/it_equipment/          application package
-├── tests/unit/                unit tests
+├── scripts/                   hello_client.py (manual MCP client)
+├── src/it_equipment/          config.py (settings), server.py (MCP server)
+├── tests/unit/                unit tests, no network
+├── tests/integration/         MCP protocol tests: in-process and over real HTTP
 ├── .env.example               configuration template
 ├── CHANGELOG.md               notable changes
 ├── pyproject.toml             metadata, dependencies, tool configuration
