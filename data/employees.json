@@ -1,0 +1,60 @@
+[
+  {
+    "employee_id": "E001",
+    "name": "Alex Rivera",
+    "role": "standard",
+    "hire_date": "2021-03-15",
+    "equipment": [
+      {"item": "laptop", "issued_on": "2023-01-10"},
+      {"item": "monitor", "issued_on": "2023-01-10"}
+    ]
+  },
+  {
+    "employee_id": "E002",
+    "name": "Priya Shah",
+    "role": "manager",
+    "hire_date": "2019-07-01",
+    "equipment": [
+      {"item": "laptop", "issued_on": "2024-05-20"},
+      {"item": "monitor", "issued_on": "2024-05-20"}
+    ]
+  },
+  {
+    "employee_id": "E003",
+    "name": "Jordan Lee",
+    "role": "standard",
+    "hire_date": "2022-09-12",
+    "equipment": [
+      {"item": "laptop", "issued_on": "2023-06-01"},
+      {"item": "monitor", "issued_on": "2025-11-03"}
+    ]
+  },
+  {
+    "employee_id": "E004",
+    "name": "Sam Okafor",
+    "role": "engineer",
+    "hire_date": "2020-02-03",
+    "equipment": [
+      {"item": "laptop", "issued_on": "2026-03-16"},
+      {"item": "monitor", "issued_on": "2024-01-08"},
+      {"item": "monitor", "issued_on": "2024-01-08"},
+      {"item": "keyboard", "issued_on": "2024-01-08"}
+    ]
+  },
+  {
+    "employee_id": "E005",
+    "name": "Taylor Brooks",
+    "role": "contractor",
+    "hire_date": "2025-08-04",
+    "equipment": [
+      {"item": "headset", "issued_on": "2025-08-04"}
+    ]
+  },
+  {
+    "employee_id": "E006",
+    "name": "Morgan Diaz",
+    "role": "engineer",
+    "hire_date": "2026-11-02",
+    "equipment": []
+  }
+]
