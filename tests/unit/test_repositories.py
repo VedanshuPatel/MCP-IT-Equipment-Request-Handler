@@ -46,9 +46,10 @@ def test_unknown_id_returns_none(employee_repository):
 
 
 def test_equipment_defaults_to_empty(tmp_path):
-    repository = JsonEmployeeRepository(_write(tmp_path, [VALID]))
+    employee = JsonEmployeeRepository(_write(tmp_path, [VALID])).get("E100")
 
-    assert repository.get("E100").equipment == ()
+    assert employee is not None
+    assert employee.equipment == ()
 
 
 def test_duplicate_ids_are_rejected(tmp_path):

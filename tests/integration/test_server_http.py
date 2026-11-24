@@ -96,6 +96,7 @@ def _post_initialize(server_url: str, host_header: str) -> int:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    assert url.hostname is not None
     connection = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
     try:
         connection.request("POST", url.path, body=body, headers=headers)

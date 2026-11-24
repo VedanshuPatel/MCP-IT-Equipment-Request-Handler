@@ -18,7 +18,7 @@ async def test_server_registers_ping_tool_with_description():
 
     tools = {tool.name: tool for tool in result.tools}
     assert "ping" in tools
-    assert "reachable" in tools["ping"].description
+    assert "reachable" in (tools["ping"].description or "")
 
 
 async def test_ping_call_returns_pong():
