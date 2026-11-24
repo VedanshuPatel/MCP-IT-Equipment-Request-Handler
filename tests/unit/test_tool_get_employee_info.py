@@ -3,6 +3,7 @@
 Covers acceptance criteria AC-01 to AC-04 in docs/REQUIREMENTS.md.
 """
 
+import shutil
 from datetime import date
 
 import pytest
@@ -68,8 +69,10 @@ def test_multiple_units_of_one_item_are_all_listed(tools):
         (date(2027, 7, 1), 8),  # on the anniversary
     ],
 )
-def test_tenure_counts_completed_years_only(employee_repository, today, expected):
-    tools = EquipmentTools(employee_repository, clock=lambda: today)
+def test_tenure_counts_completed_years_only(
+    employee_repository, policy_repository, today, expected
+):
+    tools = EquipmentTools(employee_repository, policy_repository, clock=lambda: today)
 
     assert tools.get_employee_info("E002").tenure_years == expected
 
@@ -82,7 +85,8 @@ def test_normalize_employee_id_returns_canonical_form():
     assert normalize_employee_id("  e123 ") == "E123"
 
 
-def test_from_data_dir_reads_employees_json(tmp_path):
+def test_from_data_dir_reads_employees_json(tmp_path, mock_data_dir):
+    shutil.copy(mock_data_dir / "policies.json", tmp_path / "policies.json")
     (tmp_path / "employees.json").write_text(
         '[{"employee_id": "E100", "name": "A B", "role": "standard", "hire_date": "2020-01-01"}]'
     )
