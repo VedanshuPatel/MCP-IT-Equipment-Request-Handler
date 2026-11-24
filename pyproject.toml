@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "it-equipment-handler"
+version = "0.1.0"
+description = "MCP server and ReAct agent that triages internal IT equipment requests."
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime dependencies are added in the phase that first needs them.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.2",
+    "pytest-cov>=7.1",
+    "ruff>=0.17",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------- pytest ----
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    "--cov=it_equipment",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-fail-under=85",
+]
+
+# ------------------------------------------------------------------ ruff ----
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle errors / warnings
+    "F",       # pyflakes
+    "I",       # import sorting
+    "B",       # bugbear: likely bugs
+    "UP",      # pyupgrade: modern syntax
+    "SIM",     # simplifications
+    "D",       # pydocstyle: docstrings required
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Test names describe behaviour; module docstrings are still required.
+"tests/**" = ["D103"]
