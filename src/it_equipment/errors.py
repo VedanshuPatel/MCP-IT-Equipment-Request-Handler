@@ -33,3 +33,9 @@ class EmployeeNotFoundError(DomainError):
     """No employee has the given ID."""
 
     code = "EMPLOYEE_NOT_FOUND"
+
+
+class UnknownRoleError(DomainError):
+    """The role is not in the policy table."""
+
+    code = "UNKNOWN_ROLE"
