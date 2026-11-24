@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `get_policy_limits` MCP tool: for a role, the maximum quantity, replacement interval and eligibility of every catalog item; roles are case- and space-insensitive; `UNKNOWN_ROLE` error.
+- Policy table (`data/policies.json`) with a `PolicyRepository` protocol and JSON implementation; the table is validated at startup (every role covers exactly the catalog).
+
 - `get_employee_info` MCP tool: role, tenure and current equipment for an employee; IDs are case- and space-insensitive; `INVALID_EMPLOYEE_ID` and `EMPLOYEE_NOT_FOUND` errors.
 - Mock employee data (`data/employees.json`), validated by Pydantic models at startup; `DATA_DIR` setting.
 - `EquipmentTools` facade, `EmployeeRepository` protocol with a JSON implementation, and `DomainError` codes.
