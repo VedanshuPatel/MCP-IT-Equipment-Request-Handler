@@ -12,9 +12,14 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from it_equipment.errors import EmployeeNotFoundError, InvalidEmployeeIdError
-from it_equipment.models import EmployeeInfo
-from it_equipment.repositories import EmployeeRepository, JsonEmployeeRepository
+from it_equipment.errors import EmployeeNotFoundError, InvalidEmployeeIdError, UnknownRoleError
+from it_equipment.models import EmployeeInfo, ItemLimit, PolicyLimits
+from it_equipment.repositories import (
+    EmployeeRepository,
+    JsonEmployeeRepository,
+    JsonPolicyRepository,
+    PolicyRepository,
+)
 
 #: Returns "today". Injected so tests can fix the date (REQUIREMENTS conventions).
 Clock = Callable[[], date]
@@ -53,12 +58,19 @@ class EquipmentTools:
 
     Args:
         employees: Where employee records come from.
+        policies: Where the policy table comes from.
         clock: Returns today's date. Defaults to the real date.
     """
 
-    def __init__(self, employees: EmployeeRepository, clock: Clock = date.today) -> None:
+    def __init__(
+        self,
+        employees: EmployeeRepository,
+        policies: PolicyRepository,
+        clock: Clock = date.today,
+    ) -> None:
         """Store the dependencies."""
         self._employees = employees
+        self._policies = policies
         self._clock = clock
 
     @classmethod
@@ -66,13 +78,17 @@ class EquipmentTools:
         """Build the tools from the JSON files in ``data_dir``.
 
         Args:
-            data_dir: Folder that holds ``employees.json``.
+            data_dir: Folder that holds ``employees.json`` and ``policies.json``.
             clock: Returns today's date. Defaults to the real date.
 
         Returns:
             Tools backed by the JSON repositories.
         """
-        return cls(JsonEmployeeRepository(data_dir / "employees.json"), clock)
+        return cls(
+            JsonEmployeeRepository(data_dir / "employees.json"),
+            JsonPolicyRepository(data_dir / "policies.json"),
+            clock,
+        )
 
     def get_employee_info(self, employee_id: str) -> EmployeeInfo:
         """Return the employee's role, tenure and current equipment (REQUIREMENTS 4.1).
@@ -99,3 +115,30 @@ class EquipmentTools:
             tenure_years=completed_years(employee.hire_date, self._clock()),
             equipment=list(employee.equipment),
         )
+
+    def get_policy_limits(self, role: str) -> PolicyLimits:
+        """Return what a role is eligible for and how often (REQUIREMENTS 4.2).
+
+        Args:
+            role: The role to look up; case and surrounding spaces are ignored.
+
+        Returns:
+            One entry per catalog item, in catalog order.
+
+        Raises:
+            UnknownRoleError: If the role is not in the policy table.
+        """
+        normalized = role.strip().lower()
+        limits = self._policies.limits_for(normalized)
+        if limits is None:
+            raise UnknownRoleError(f"no policy for role {role!r}")
+        items = [
+            ItemLimit(
+                item=item,
+                max_quantity=limits[item].max_quantity,
+                replacement_years=limits[item].replacement_years,
+                eligible=limits[item].max_quantity > 0,
+            )
+            for item in self._policies.catalog()
+        ]
+        return PolicyLimits(role=normalized, items=items)
