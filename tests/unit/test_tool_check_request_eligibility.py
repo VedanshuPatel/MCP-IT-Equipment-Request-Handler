@@ -9,7 +9,7 @@ from datetime import date
 import pytest
 
 from it_equipment.errors import InvalidEmployeeIdError, InvalidInputError, UnknownRoleError
-from it_equipment.repositories import JsonEmployeeRepository
+from it_equipment.repositories import JsonEmployeeRepository, JsonlEscalationRepository
 from it_equipment.tools import EquipmentTools
 
 # REQUIREMENTS 5.1, today = 2026-11-24:
@@ -55,9 +55,13 @@ def test_matches_the_requirements_test_matrix(
         (date(2027, 1, 9), "not_eligible", "LIMIT_REACHED"),  # one day before
     ],
 )
-def test_due_date_boundary(employee_repository, policy_repository, today, status, code):
+def test_due_date_boundary(
+    employee_repository, policy_repository, escalation_repository, today, status, code
+):
     """AC-09: E001's laptop (standard, 4 years, issued 2023-01-10)."""
-    tools = EquipmentTools(employee_repository, policy_repository, clock=lambda: today)
+    tools = EquipmentTools(
+        employee_repository, policy_repository, escalation_repository, clock=lambda: today
+    )
 
     result = tools.check_request_eligibility("E001", "laptop")
 
@@ -75,7 +79,12 @@ def _tools_for(tmp_path, policy_repository, today: date, *, role: str, equipment
         "equipment": [{"item": item, "issued_on": issued_on} for item, issued_on in equipment],
     }
     path.write_text(json.dumps([record]))
-    return EquipmentTools(JsonEmployeeRepository(path), policy_repository, clock=lambda: today)
+    return EquipmentTools(
+        JsonEmployeeRepository(path),
+        policy_repository,
+        JsonlEscalationRepository(tmp_path / "escalations.jsonl"),
+        clock=lambda: today,
+    )
 
 
 def test_unit_issued_on_29_february_is_due_on_28_february(tmp_path, policy_repository):

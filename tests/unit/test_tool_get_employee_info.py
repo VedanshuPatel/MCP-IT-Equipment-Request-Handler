@@ -70,9 +70,11 @@ def test_multiple_units_of_one_item_are_all_listed(tools):
     ],
 )
 def test_tenure_counts_completed_years_only(
-    employee_repository, policy_repository, today, expected
+    employee_repository, policy_repository, escalation_repository, today, expected
 ):
-    tools = EquipmentTools(employee_repository, policy_repository, clock=lambda: today)
+    tools = EquipmentTools(
+        employee_repository, policy_repository, escalation_repository, clock=lambda: today
+    )
 
     assert tools.get_employee_info("E002").tenure_years == expected
 

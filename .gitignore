@@ -229,3 +229,6 @@ PLAN.md
 # Submission report, built in Overleaf from these files
 /main.tex
 /screenshots/
+
+# Escalation tickets written by the running server (runtime data, not source)
+/data/escalations.jsonl

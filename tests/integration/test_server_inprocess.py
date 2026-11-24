@@ -125,3 +125,40 @@ async def test_empty_item_is_a_tool_error_carrying_the_code(tools):
 
     assert result.is_error
     assert "INVALID_INPUT:" in result.content[0].text
+
+
+async def test_lookup_tools_are_read_only_and_flagging_is_idempotent(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.list_tools()
+
+    hints = {tool.name: tool.annotations for tool in result.tools}
+    for name in ("get_employee_info", "get_policy_limits", "check_request_eligibility"):
+        assert hints[name].read_only_hint is True
+    assert hints["flag_for_human_review"].read_only_hint is False
+    assert hints["flag_for_human_review"].idempotent_hint is True
+
+
+async def test_flag_for_human_review_creates_a_ticket(tools, tmp_path):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool(
+            "flag_for_human_review",
+            {"employee_id": "E001", "request": "Standing desk?", "reason": "UNKNOWN_ITEM: desk"},
+        )
+
+    assert not result.is_error
+    assert result.structured_content == {
+        "ticket_id": "ESC-000001",
+        "status": "open",
+        "duplicate": False,
+    }
+    assert (tmp_path / "escalations.jsonl").exists()
+
+
+async def test_empty_reason_is_a_tool_error_carrying_the_code(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool(
+            "flag_for_human_review", {"employee_id": "E001", "request": "Desk?", "reason": ""}
+        )
+
+    assert result.is_error
+    assert "INVALID_INPUT:" in result.content[0].text
