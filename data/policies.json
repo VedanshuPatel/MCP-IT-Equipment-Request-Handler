@@ -1,0 +1,29 @@
+{
+  "catalog": ["laptop", "monitor", "headset", "keyboard"],
+  "roles": {
+    "standard": {
+      "laptop": {"max_quantity": 1, "replacement_years": 4},
+      "monitor": {"max_quantity": 1, "replacement_years": 3},
+      "headset": {"max_quantity": 1, "replacement_years": 2},
+      "keyboard": {"max_quantity": 1, "replacement_years": 2}
+    },
+    "engineer": {
+      "laptop": {"max_quantity": 1, "replacement_years": 3},
+      "monitor": {"max_quantity": 2, "replacement_years": 3},
+      "headset": {"max_quantity": 1, "replacement_years": 2},
+      "keyboard": {"max_quantity": 1, "replacement_years": 2}
+    },
+    "manager": {
+      "laptop": {"max_quantity": 1, "replacement_years": 2},
+      "monitor": {"max_quantity": 2, "replacement_years": 3},
+      "headset": {"max_quantity": 1, "replacement_years": 2},
+      "keyboard": {"max_quantity": 1, "replacement_years": 2}
+    },
+    "contractor": {
+      "laptop": {"max_quantity": 0, "replacement_years": null},
+      "monitor": {"max_quantity": 0, "replacement_years": null},
+      "headset": {"max_quantity": 1, "replacement_years": 2},
+      "keyboard": {"max_quantity": 1, "replacement_years": 2}
+    }
+  }
+}
