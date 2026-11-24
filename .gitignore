@@ -221,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local-only files (not part of the repository)
+PLAN.md
+.claude/settings.local.json
