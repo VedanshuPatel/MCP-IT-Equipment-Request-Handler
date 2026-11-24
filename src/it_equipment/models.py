@@ -5,8 +5,9 @@ return, so the MCP output schema comes straight from these classes.
 """
 
 from datetime import date
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: Employee IDs are ``E`` followed by exactly 3 digits (REQUIREMENTS 2.2).
 EMPLOYEE_ID_PATTERN = r"^E\d{3}$"
@@ -42,3 +43,57 @@ class EmployeeInfo(BaseModel):
     hire_date: date
     tenure_years: int = Field(ge=0, description="Completed years since the hire date.")
     equipment: list[EquipmentUnit] = Field(description="Every unit currently on file.")
+
+
+class ItemPolicy(BaseModel):
+    """The policy for one item and one role: how many units and how often."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_quantity: int = Field(ge=0, description="Most units allowed; 0 means not eligible.")
+    replacement_years: int | None = Field(
+        default=None, ge=1, description="Whole years before a unit may be replaced."
+    )
+
+    @model_validator(mode="after")
+    def _interval_required_when_eligible(self) -> Self:
+        if self.max_quantity > 0 and self.replacement_years is None:
+            raise ValueError("replacement_years is required when max_quantity is above 0")
+        return self
+
+
+class PolicyTable(BaseModel):
+    """The whole policy file: the catalog and, for each role, a policy per catalog item."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    catalog: tuple[str, ...] = Field(min_length=1)
+    roles: dict[str, dict[str, ItemPolicy]] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _every_role_covers_the_catalog(self) -> Self:
+        expected = set(self.catalog)
+        for role, items in self.roles.items():
+            if set(items) != expected:
+                missing = sorted(expected - set(items))
+                extra = sorted(set(items) - expected)
+                raise ValueError(
+                    f"role {role!r} must cover the catalog: missing {missing}, extra {extra}"
+                )
+        return self
+
+
+class ItemLimit(BaseModel):
+    """One row of ``get_policy_limits``: a catalog item and the role's limit for it."""
+
+    item: str
+    max_quantity: int = Field(description="Most units allowed; 0 means not eligible.")
+    replacement_years: int | None = Field(description="Years before replacement; null if none.")
+    eligible: bool = Field(description="True when max_quantity is above 0.")
+
+
+class PolicyLimits(BaseModel):
+    """Result of ``get_policy_limits`` (REQUIREMENTS 4.2)."""
+
+    role: str = Field(description="Normalized role, for example 'manager'.")
+    items: list[ItemLimit] = Field(description="One entry per catalog item, in catalog order.")

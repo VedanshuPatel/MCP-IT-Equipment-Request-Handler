@@ -20,13 +20,16 @@ from pydantic import Field
 from it_equipment import __version__
 from it_equipment.config import ServerSettings, data_dir
 from it_equipment.errors import DomainError
-from it_equipment.models import EmployeeInfo
+from it_equipment.models import EmployeeInfo, PolicyLimits
 from it_equipment.tools import EquipmentTools
 
 SERVER_NAME = "it-equipment"
 
 EmployeeIdArg = Annotated[
     str, Field(description="Employee ID: 'E' followed by 3 digits, for example 'E002'.")
+]
+RoleArg = Annotated[
+    str, Field(description="Role name, for example 'manager'; returned by get_employee_info.")
 ]
 
 
@@ -76,6 +79,12 @@ def create_server(tools: EquipmentTools | None = None) -> MCPServer:
         """Look up an employee's role, tenure and current equipment on file."""
         with _as_tool_error():
             return tools.get_employee_info(employee_id)
+
+    @server.tool()
+    def get_policy_limits(role: RoleArg) -> PolicyLimits:
+        """List what a role is eligible for: maximum quantity and replacement interval per item."""
+        with _as_tool_error():
+            return tools.get_policy_limits(role)
 
     return server
 

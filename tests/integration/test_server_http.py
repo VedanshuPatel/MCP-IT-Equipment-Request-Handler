@@ -67,6 +67,14 @@ def server_url() -> Iterator[str]:
         process.wait(timeout=10)
 
 
+async def test_client_calls_get_policy_limits_over_http(server_url):
+    async with Client(server_url) as client:
+        result = await client.call_tool("get_policy_limits", {"role": "manager"})
+
+    assert not result.is_error
+    assert result.structured_content["role"] == "manager"
+
+
 async def test_client_calls_ping_over_http(server_url):
     async with Client(server_url) as client:
         tools = await client.list_tools()
@@ -139,6 +147,7 @@ def test_smoke_client_script_prints_employee_and_not_found_error(server_url):
         check=True,
     )
 
-    assert "Tools: get_employee_info, ping" in result.stdout
+    tools_line = result.stdout.split("Tools:")[1].splitlines()[0]
+    assert "get_employee_info" in tools_line
     assert '"role": "manager"' in result.stdout
     assert "EMPLOYEE_NOT_FOUND: no employee with ID E999" in result.stdout

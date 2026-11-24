@@ -68,3 +68,28 @@ async def test_malformed_id_is_a_tool_error_carrying_the_code(tools):
 
     assert result.is_error
     assert "INVALID_EMPLOYEE_ID:" in result.content[0].text
+
+
+async def test_get_policy_limits_is_listed_with_input_schema(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.list_tools()
+
+    tool = next(tool for tool in result.tools if tool.name == "get_policy_limits")
+    assert tool.input_schema["required"] == ["role"]
+
+
+async def test_get_policy_limits_returns_structured_limits(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool("get_policy_limits", {"role": "Manager"})
+
+    assert not result.is_error
+    laptop = result.structured_content["items"][0]
+    assert laptop == {"item": "laptop", "max_quantity": 1, "replacement_years": 2, "eligible": True}
+
+
+async def test_unknown_role_is_a_tool_error_carrying_the_code(tools):
+    async with Client(create_server(tools)) as client:
+        result = await client.call_tool("get_policy_limits", {"role": "intern"})
+
+    assert result.is_error
+    assert "UNKNOWN_ROLE:" in result.content[0].text

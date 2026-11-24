@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 3, first real tool: `get_employee_info` over the mock employee data. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 4, two tools: `get_employee_info` and `get_policy_limits` over the mock data. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -76,7 +76,7 @@ Pass your own IDs with `python scripts/smoke_client.py E004 E006`. `scripts/hell
 
 Settings (see `.env.example`):
 - `MCP_HOST` and `MCP_PORT`: where the server listens. Loopback addresses only.
-- `DATA_DIR`: where the server reads the mock data. Default: `data`.
+- `DATA_DIR`: where the server reads the mock data (`employees.json`, `policies.json`). Default: `data`.
 - `MCP_SERVER_URL`: where the clients connect.
 
 ## Project layout
@@ -84,7 +84,7 @@ Settings (see `.env.example`):
 ```
 .
 ├── .github/workflows/ci.yml   CI pipeline
-├── data/                      employees.json (synthetic mock data)
+├── data/                      employees.json, policies.json (synthetic mock data)
 ├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
 ├── scripts/                   smoke_client.py, hello_client.py (manual MCP clients)
 ├── src/it_equipment/          application package (see docs/ARCHITECTURE.md)
