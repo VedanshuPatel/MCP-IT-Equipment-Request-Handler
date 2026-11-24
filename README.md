@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 2, MCP server skeleton (a `ping` tool over Streamable HTTP). The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 3, first real tool: `get_employee_info` over the mock employee data. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -51,27 +51,43 @@ pytest                  # tests + coverage gate (85%)
 
 ```bash
 python -m it_equipment.server      # terminal 1: serves http://127.0.0.1:8000/mcp
-python scripts/hello_client.py     # terminal 2: lists the tools and calls ping
+python scripts/smoke_client.py     # terminal 2: calls get_employee_info for E002 and E999
 ```
 
-Expected client output:
+Expected client output (shortened):
 
 ```
 Connected to http://127.0.0.1:8000/mcp
-Tools: ping
-ping -> pong
+Tools: get_employee_info, ping
+
+get_employee_info('E002') ->
+{
+  "employee_id": "E002",
+  "name": "Priya Shah",
+  "role": "manager",
+  ...
+}
+
+get_employee_info('E999') ->
+  error: Error executing tool get_employee_info: EMPLOYEE_NOT_FOUND: no employee with ID E999
 ```
 
-`MCP_HOST` and `MCP_PORT` set where the server listens (loopback addresses only), and `MCP_SERVER_URL` sets where the client connects. See `.env.example`.
+Pass your own IDs with `python scripts/smoke_client.py E004 E006`. `scripts/hello_client.py` still checks plain connectivity with `ping`.
+
+Settings (see `.env.example`):
+- `MCP_HOST` and `MCP_PORT`: where the server listens. Loopback addresses only.
+- `DATA_DIR`: where the server reads the mock data. Default: `data`.
+- `MCP_SERVER_URL`: where the clients connect.
 
 ## Project layout
 
 ```
 .
 ├── .github/workflows/ci.yml   CI pipeline
+├── data/                      employees.json (synthetic mock data)
 ├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
-├── scripts/                   hello_client.py (manual MCP client)
-├── src/it_equipment/          config.py (settings), server.py (MCP server)
+├── scripts/                   smoke_client.py, hello_client.py (manual MCP clients)
+├── src/it_equipment/          application package (see docs/ARCHITECTURE.md)
 ├── tests/unit/                unit tests, no network
 ├── tests/integration/         MCP protocol tests: in-process and over real HTTP
 ├── .env.example               configuration template
