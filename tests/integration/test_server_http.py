@@ -47,7 +47,12 @@ def _wait_until_listening(port: int, process: subprocess.Popen) -> None:
 def server_url() -> Iterator[str]:
     """Run the MCP server in a subprocess and yield its URL."""
     port = _free_port()
-    env = {**os.environ, "MCP_HOST": "127.0.0.1", "MCP_PORT": str(port)}
+    env = {
+        **os.environ,
+        "MCP_HOST": "127.0.0.1",
+        "MCP_PORT": str(port),
+        "DATA_DIR": str(ROOT / "data"),
+    }
     process = subprocess.Popen(
         [sys.executable, "-m", "it_equipment.server"],
         env=env,
@@ -91,6 +96,7 @@ def _post_initialize(server_url: str, host_header: str) -> int:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    assert url.hostname is not None
     connection = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
     try:
         connection.request("POST", url.path, body=body, headers=headers)
@@ -119,5 +125,20 @@ def test_hello_client_script_prints_pong(server_url):
         check=True,
     )
 
-    assert "Tools: ping" in result.stdout
+    assert "ping" in result.stdout.split("Tools:")[1].splitlines()[0]
     assert "ping -> pong" in result.stdout
+
+
+def test_smoke_client_script_prints_employee_and_not_found_error(server_url):
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "smoke_client.py")],
+        env={**os.environ, "MCP_SERVER_URL": server_url},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+
+    assert "Tools: get_employee_info, ping" in result.stdout
+    assert '"role": "manager"' in result.stdout
+    assert "EMPLOYEE_NOT_FOUND: no employee with ID E999" in result.stdout

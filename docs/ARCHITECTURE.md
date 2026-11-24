@@ -2,25 +2,37 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 2, MCP server skeleton._
+_Last updated: Phase 3, `get_employee_info`._
 
 ## Current state
 
-An MCP server with one trivial tool (`ping`) runs over Streamable HTTP. The business tools and the agent come next.
+The MCP server has its first real tool, `get_employee_info`, plus `ping`. Each layer depends only on the one below it:
 
 ```
-scripts/hello_client.py ──HTTP──►  http://127.0.0.1:8000/mcp
-   (mcp.Client)                    server.py: create_server() → MCPServer + ping
-                                   config.py: ServerSettings (MCP_HOST, MCP_PORT)
+scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; DomainError → ToolError
+   (mcp.Client)                      │
+                                     ▼
+                                   tools.py      EquipmentTools facade: business logic, clock injected
+                                     │
+                                     ▼
+                                   repositories.py  EmployeeRepository protocol + JSON implementation
+                                     │
+                                     ▼
+                                   data/employees.json   validated by models.py at startup
 ```
 
 | Component | Path | Purpose |
 |---|---|---|
 | Requirements | `docs/REQUIREMENTS.md` | The testable rules that every later phase implements |
-| Settings | `src/it_equipment/config.py` | `ServerSettings` (validated host, port, path) and `mcp_server_url()` |
-| MCP server | `src/it_equipment/server.py` | `create_server()` builds the server and registers tools; `main()` serves it over Streamable HTTP |
-| Hello client | `scripts/hello_client.py` | Manual check: lists the tools and calls `ping` |
-| Unit tests | `tests/unit/` | Package, settings and server module, no network |
+| Settings | `src/it_equipment/config.py` | `ServerSettings` (validated host, port, path), `mcp_server_url()`, `data_dir()` |
+| Models | `src/it_equipment/models.py` | Pydantic `Employee`, `EquipmentUnit`, `EmployeeInfo`; validate the data and define tool output |
+| Errors | `src/it_equipment/errors.py` | `DomainError` subclasses with stable codes (`INVALID_EMPLOYEE_ID`, `EMPLOYEE_NOT_FOUND`) |
+| Repository | `src/it_equipment/repositories.py` | `EmployeeRepository` protocol; `JsonEmployeeRepository` loads and validates `data/employees.json` |
+| Tools | `src/it_equipment/tools.py` | `EquipmentTools.get_employee_info`, plus ID normalization and tenure; no MCP code |
+| MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers; `main()` serves Streamable HTTP |
+| Mock data | `data/employees.json` | The 6 synthetic employees from REQUIREMENTS 2.3 and 2.4 |
+| Clients | `scripts/smoke_client.py`, `scripts/hello_client.py` | Manual checks: `get_employee_info` for given IDs; `ping` |
+| Unit tests | `tests/unit/` | Tools, repository, settings, server module; no network, today fixed to 2026-11-24 |
 | Integration tests | `tests/integration/` | In-process MCP client tests, and end-to-end tests against the real server process |
 | CI | `.github/workflows/ci.yml` | Lint, format check and tests on Python 3.12 and 3.15 |
 | Config template | `.env.example` | Every setting planned across the phases |
@@ -51,3 +63,6 @@ scripts/hello_client.py ──HTTP──►  http://127.0.0.1:8000/mcp
 | AD-010 | 2026-11-24 | `check_request_eligibility` keeps the SCOPE signature `(employee_id, item)`; an extra unit and an early replacement both return `LIMIT_REACHED` with `next_eligible_date` | Matches the brief exactly; the employee still learns when a replacement becomes possible |
 | AD-011 | 2026-11-24 | A `create_server()` factory builds the server; `main()` only runs it | Tests get a fresh server and connect in-process (`mcp.Client(server)`), with no network or global state |
 | AD-012 | 2026-11-24 | Settings refuse any non-loopback `MCP_HOST`; the SDK's DNS-rebinding protection stays on and is tested | The server has no authentication, so it must not be reachable from other machines or from web pages (requirement N1) |
+| AD-013 | 2026-11-24 | Tool logic lives in an `EquipmentTools` facade with injected repository and clock; `server.py` only wraps it | Each tool is unit-tested as a plain method (SCOPE Part 3); a new tool is one method plus one wrapper |
+| AD-014 | 2026-11-24 | Tools raise `DomainError` with a stable code; the server converts it to the SDK's `ToolError` | The client gets `is_error` with the code in the text, while unexpected crashes stay hidden from it |
+| AD-015 | 2026-11-24 | Mock data is validated by Pydantic once, when the repository loads | Bad data stops the server at startup instead of failing during a request |

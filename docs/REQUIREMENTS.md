@@ -106,8 +106,9 @@ Rules for all four tools:
 
 - Every input is validated. IDs, roles and items are case-insensitive, and surrounding spaces are
   ignored: ` e002 ` means `E002`, and `Monitor` means `monitor`.
-- Errors are returned as MCP tool errors (`isError: true`). The error text starts with an error
-  code and a colon, for example `EMPLOYEE_NOT_FOUND: no employee with ID E999`.
+- Errors are returned as MCP tool errors (`isError: true`). The error text contains an error
+  code and a colon, for example `EMPLOYEE_NOT_FOUND: no employee with ID E999`. The MCP SDK
+  puts `Error executing tool <name>: ` in front of it.
 - Tools never call the network. With the same data and date, they return the same result.
 
 ### 4.1 `get_employee_info(employee_id)`

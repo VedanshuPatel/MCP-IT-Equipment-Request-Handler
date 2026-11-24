@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `get_employee_info` MCP tool: role, tenure and current equipment for an employee; IDs are case- and space-insensitive; `INVALID_EMPLOYEE_ID` and `EMPLOYEE_NOT_FOUND` errors.
+- Mock employee data (`data/employees.json`), validated by Pydantic models at startup; `DATA_DIR` setting.
+- `EquipmentTools` facade, `EmployeeRepository` protocol with a JSON implementation, and `DomainError` codes.
+- `scripts/smoke_client.py`: calls `get_employee_info` on the running server (SCOPE step 3).
+
 - MCP server (`python -m it_equipment.server`) built on `mcp` 2.x `MCPServer`, serving a `ping` tool over Streamable HTTP at `http://127.0.0.1:8000/mcp`.
 - Settings (`it_equipment.config`): `MCP_HOST`, `MCP_PORT` and `MCP_SERVER_URL`, validated; the server refuses non-loopback hosts.
 - `scripts/hello_client.py`: connects to the server, lists its tools and calls `ping`.
@@ -20,3 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `it_equipment` package skeleton that reads its version from the installed package metadata, with smoke tests.
 - Documentation: README, `docs/ARCHITECTURE.md`, this changelog, and the `.env.example` configuration template.
 - `docs/REQUIREMENTS.md`: request data, mock data set, policy rules, contracts for the four MCP tools, eligibility rules with a test matrix, agent decision rules, what counts as ambiguous, response rules, reflection, guardrails, acceptance criteria (AC-01 to AC-22) and the demo requests.
+
+### Changed
+
+- REQUIREMENTS section 4: tool error text *contains* the error code, because the MCP SDK puts `Error executing tool <name>: ` in front of it.

@@ -9,12 +9,14 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 #: Hosts the MCP server may bind to. Any other address would expose it beyond this machine
 #: (requirement N1).
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000/mcp"
+DEFAULT_DATA_DIR = "data"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,3 +83,16 @@ def mcp_server_url(env: Mapping[str, str] | None = None) -> str:
     """
     env = os.environ if env is None else env
     return env.get("MCP_SERVER_URL", DEFAULT_SERVER_URL)
+
+
+def data_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Return the folder that holds the mock data, from ``DATA_DIR``.
+
+    Args:
+        env: Variables to read. Defaults to the process environment.
+
+    Returns:
+        The configured folder, or ``data`` (relative to the working directory) when unset.
+    """
+    env = os.environ if env is None else env
+    return Path(env.get("DATA_DIR", DEFAULT_DATA_DIR))

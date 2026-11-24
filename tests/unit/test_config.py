@@ -1,8 +1,10 @@
 """Unit tests for reading and validating settings."""
 
+from pathlib import Path
+
 import pytest
 
-from it_equipment.config import DEFAULT_SERVER_URL, ServerSettings, mcp_server_url
+from it_equipment.config import DEFAULT_SERVER_URL, ServerSettings, data_dir, mcp_server_url
 
 
 def test_defaults_listen_on_localhost_port_8000():
@@ -47,3 +49,11 @@ def test_server_url_comes_from_environment():
     assert mcp_server_url({"MCP_SERVER_URL": "http://localhost:9000/mcp"}) == (
         "http://localhost:9000/mcp"
     )
+
+
+def test_data_dir_defaults_to_data_folder():
+    assert data_dir({}) == Path("data")
+
+
+def test_data_dir_comes_from_environment(tmp_path):
+    assert data_dir({"DATA_DIR": str(tmp_path)}) == tmp_path
