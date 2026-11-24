@@ -9,7 +9,9 @@ description = "MCP server and ReAct agent that triages internal IT equipment req
 readme = "README.md"
 requires-python = ">=3.12"
 # Runtime dependencies are added in the phase that first needs them.
-dependencies = []
+dependencies = [
+    "mcp>=2.3",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -53,6 +55,10 @@ select = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.isort]
+# Always sort our own package as first-party, even before a module file exists (TDD red step).
+known-first-party = ["it_equipment"]
 
 [tool.ruff.lint.per-file-ignores]
 # Test names describe behaviour; module docstrings are still required.
