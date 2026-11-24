@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- MCP server (`python -m it_equipment.server`) built on `mcp` 2.x `MCPServer`, serving a `ping` tool over Streamable HTTP at `http://127.0.0.1:8000/mcp`.
+- Settings (`it_equipment.config`): `MCP_HOST`, `MCP_PORT` and `MCP_SERVER_URL`, validated; the server refuses non-loopback hosts.
+- `scripts/hello_client.py`: connects to the server, lists its tools and calls `ping`.
+- Integration tests: in-process MCP protocol tests, and end-to-end tests that start the real server and check `ping`, the hello client and DNS-rebinding protection.
+
 - Project scaffolding: `pyproject.toml` with a `src/` layout and `dev` extras.
 - ruff for linting and formatting, with Google-style docstring rules.
 - pytest with a branch-coverage gate at 85%.
