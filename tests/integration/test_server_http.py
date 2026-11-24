@@ -75,6 +75,16 @@ async def test_client_calls_get_policy_limits_over_http(server_url):
     assert result.structured_content["role"] == "manager"
 
 
+async def test_client_calls_check_request_eligibility_over_http(server_url):
+    async with Client(server_url) as client:
+        result = await client.call_tool(
+            "check_request_eligibility", {"employee_id": "E001", "item": "standing desk"}
+        )
+
+    assert not result.is_error
+    assert result.structured_content["reason_code"] == "UNKNOWN_ITEM"
+
+
 async def test_client_calls_ping_over_http(server_url):
     async with Client(server_url) as client:
         tools = await client.list_tools()
