@@ -14,3 +14,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - GitHub Actions CI: lint, format check and tests on Python 3.12 and 3.15.
 - `it_equipment` package skeleton that reads its version from the installed package metadata, with smoke tests.
 - Documentation: README, `docs/ARCHITECTURE.md`, this changelog, and the `.env.example` configuration template.
+- `docs/REQUIREMENTS.md`: request data, mock data set, policy rules, contracts for the four MCP tools, eligibility rules with a test matrix, agent decision rules, what counts as ambiguous, response rules, reflection, guardrails, acceptance criteria (AC-01 to AC-22) and the demo requests.
