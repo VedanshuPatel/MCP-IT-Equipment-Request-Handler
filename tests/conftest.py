@@ -148,11 +148,17 @@ class ScriptedLLM:
     def __init__(self, calls: list[ToolCall]) -> None:
         """Queue the tool calls to return, first one first."""
         self._calls = list(calls)
-        self.requests: list[tuple[str, str, list[ToolSpec]]] = []
+        self.requests: list[tuple[str, str, list[ToolSpec], list[tuple[ToolCall, str]]]] = []
 
-    def next_call(self, instructions: str, prompt: str, tools: Sequence[ToolSpec]) -> ToolCall:
-        """Record the request and return the next prepared tool call."""
-        self.requests.append((instructions, prompt, list(tools)))
+    def next_call(
+        self,
+        instructions: str,
+        prompt: str,
+        tools: Sequence[ToolSpec],
+        history: Sequence[tuple[ToolCall, str]] = (),
+    ) -> ToolCall:
+        """Record the request, including the history, and return the next prepared call."""
+        self.requests.append((instructions, prompt, list(tools), list(history)))
         if not self._calls:
             raise AssertionError("ScriptedLLM ran out of tool calls")
         return self._calls.pop(0)
