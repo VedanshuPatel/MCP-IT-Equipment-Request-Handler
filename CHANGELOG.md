@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Agent foundation (SCOPE step 5): one model-chosen tool call for a hard-coded request (`agent/first_call.py`; `scripts/one_call_demo.py` prints the Thought, the Action and the Observation).
+- `FoundryLLM` behind an `LLMClient` protocol: Microsoft Foundry through the OpenAI Responses API with native function calling. Every request requires exactly one tool call (`tool_choice="required"`, no parallel calls) and returns a `ToolCall` (tool, thought, arguments).
+- Tool catalog built from the server's `list_tools`: each tool is offered as a strict function whose schema has an extra required `thought` argument, so every call carries the model's reason (the ReAct Thought); `ping` is hidden.
+- `McpToolClient`: MCP client that turns every tool result, success or error, into an `Observation`.
+- Settings for the agent: `FoundrySettings` (`FOUNDRY_ENDPOINT`, `FOUNDRY_API_KEY`, `FOUNDRY_DEPLOYMENT`; the key never appears in `repr` or error messages) and `.env` loading with `python-dotenv`.
+- Dependencies: `openai`, `python-dotenv`.
+- Live end-to-end tests (`tests/live/`, marker `live`): the real Foundry model and the real MCP server over HTTP. Deselected by default and skipped without `FOUNDRY_*` settings; run with `pytest -m live --no-cov`.
 - `flag_for_human_review` MCP tool: creates an open escalation ticket (`ESC-000001`, ...) in `DATA_DIR/escalations.jsonl`; returns the existing ticket for a repeated employee and request (`duplicate: true`); accepts `UNKNOWN` when a request has no employee ID; `INVALID_INPUT` for an empty or too-long request or reason. The MCP server now has all four tools.
 - `EscalationRepository` protocol with a JSON Lines implementation, and a UTC clock injected into `EquipmentTools` for ticket timestamps.
 - MCP tool annotations: the three lookup tools are read-only; `flag_for_human_review` is a non-destructive, idempotent write.

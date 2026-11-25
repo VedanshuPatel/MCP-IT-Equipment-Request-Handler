@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 6, the MCP server is complete: `get_employee_info`, `get_policy_limits`, `check_request_eligibility` and `flag_for_human_review`. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 7, agent foundation: the MCP server is complete, and the agent connects to it and makes one model-chosen tool call through native function calling on Microsoft Foundry. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -44,8 +44,18 @@ cp .env.example .env               # fill in values when a later phase needs the
 ```bash
 ruff check .            # lint + docstring rules
 ruff format --check .   # formatting
-pytest                  # tests + coverage gate (85%)
+pytest                  # tests + coverage gate (85%); live tests are deselected
 ```
+
+### Live end-to-end tests (not in CI)
+
+These call the real Foundry model and the real MCP server over HTTP, so they are opt-in. They read `FOUNDRY_*` from the environment or `.env`, and are skipped without them:
+
+```bash
+pytest -m live --no-cov
+```
+
+The model is not deterministic, so the assertions accept any sensible step rather than one exact reply.
 
 ### Run the MCP server
 
@@ -79,6 +89,24 @@ Settings (see `.env.example`):
 - `DATA_DIR`: where the server reads the mock data (`employees.json`, `policies.json`) and writes escalation tickets (`escalations.jsonl`). Default: `data`.
 - `MCP_SERVER_URL`: where the clients connect.
 
+### Agent: one tool call (Phase 7)
+
+Put your Foundry settings in `.env` (copy `.env.example`; `.env` is git-ignored):
+
+```
+FOUNDRY_ENDPOINT=https://<your-resource>.services.ai.azure.com/openai/v1
+FOUNDRY_API_KEY=<your-api-key>
+FOUNDRY_DEPLOYMENT=<your-deployment>
+```
+
+Then, with the server running in another terminal:
+
+```bash
+python scripts/one_call_demo.py    # prints the model's Thought, its tool call (Action) and the result (Observation)
+```
+
+The default test run never calls Foundry: it uses a scripted model and a mocked HTTP layer, so CI needs no key. To check against the real model, run the live tests (`pytest -m live --no-cov`, see above).
+
 ## Project layout
 
 ```
@@ -86,10 +114,12 @@ Settings (see `.env.example`):
 ├── .github/workflows/ci.yml   CI pipeline
 ├── data/                      employees.json, policies.json (mock data); escalations.jsonl (runtime, git-ignored)
 ├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
-├── scripts/                   smoke_client.py, hello_client.py (manual MCP clients)
+├── scripts/                   one_call_demo.py (agent), smoke_client.py, hello_client.py (MCP clients)
 ├── src/it_equipment/          application package (see docs/ARCHITECTURE.md)
 ├── tests/unit/                unit tests, no network
 ├── tests/integration/         MCP protocol tests: in-process and over real HTTP
+├── tests/agent/               agent tests with a scripted model and the real server in-process
+├── tests/live/                opt-in end-to-end tests against the real Foundry model
 ├── .env.example               configuration template
 ├── CHANGELOG.md               notable changes
 ├── pyproject.toml             metadata, dependencies, tool configuration

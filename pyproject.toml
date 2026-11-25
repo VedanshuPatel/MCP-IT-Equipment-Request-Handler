@@ -37,6 +37,11 @@ addopts = [
     "--cov-branch",
     "--cov-report=term-missing",
     "--cov-fail-under=85",
+    # Live tests call the real Foundry model: opt-in with `pytest -m live --no-cov`.
+    "-m", "not live",
+]
+markers = [
+    "live: end-to-end test against the real Foundry model; needs FOUNDRY_* settings",
 ]
 
 # ------------------------------------------------------------------ ruff ----
