@@ -4,7 +4,7 @@ Pydantic validates the mock data when it is loaded and defines the JSON that the
 return, so the MCP output schema comes straight from these classes.
 """
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -128,3 +128,31 @@ class EligibilityResult(BaseModel):
         default=None, description="LIMIT_REACHED only: when a replacement becomes possible."
     )
     message: str = Field(description="One plain-English sentence explaining the result.")
+
+
+#: Escalation requests are stored in full but capped (REQUIREMENTS 4.4).
+MAX_REQUEST_LENGTH = 2000
+MAX_REASON_LENGTH = 500
+
+
+class EscalationTicket(BaseModel):
+    """One escalation, as stored in ``escalations.jsonl`` (REQUIREMENTS 4.4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ticket_id: str = Field(pattern=r"^ESC-\d{6}$")
+    employee_id: str = Field(description="Normalized employee ID, or 'UNKNOWN'.")
+    request: str = Field(min_length=1, max_length=MAX_REQUEST_LENGTH)
+    reason: str = Field(min_length=1, max_length=MAX_REASON_LENGTH)
+    status: Literal["open"] = "open"
+    created_at: datetime = Field(description="When the ticket was created, in UTC.")
+
+
+class EscalationResult(BaseModel):
+    """Result of ``flag_for_human_review`` (REQUIREMENTS 4.4)."""
+
+    ticket_id: str = Field(description="Ticket ID, for example 'ESC-000001'.")
+    status: Literal["open"] = Field(description="Tickets start open for a human reviewer.")
+    duplicate: bool = Field(
+        description="True when an open ticket already existed for this employee and request."
+    )
