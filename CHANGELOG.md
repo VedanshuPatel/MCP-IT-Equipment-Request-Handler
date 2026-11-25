@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `flag_for_human_review` MCP tool: creates an open escalation ticket (`ESC-000001`, ...) in `DATA_DIR/escalations.jsonl`; returns the existing ticket for a repeated employee and request (`duplicate: true`); accepts `UNKNOWN` when a request has no employee ID; `INVALID_INPUT` for an empty or too-long request or reason. The MCP server now has all four tools.
+- `EscalationRepository` protocol with a JSON Lines implementation, and a UTC clock injected into `EquipmentTools` for ticket timestamps.
+- MCP tool annotations: the three lookup tools are read-only; `flag_for_human_review` is a non-destructive, idempotent write.
+
 - `check_request_eligibility` MCP tool: decides `eligible`, `not_eligible` or `needs_review` with a reason code (`NEW_ALLOCATION`, `REFRESH_DUE`, `LIMIT_REACHED`, `ROLE_NOT_ELIGIBLE`, `UNKNOWN_ITEM`, `EMPLOYEE_NOT_FOUND`), the units held, the role's limit, the next eligible date and a plain-English message; `INVALID_INPUT` error for an empty item.
 - Eligibility rule chain (`rules.py`): one class per rule E1 to E6, applied in order; due dates handle 29 February.
 
@@ -33,5 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `docs/REQUIREMENTS.md`: request data, mock data set, policy rules, contracts for the four MCP tools, eligibility rules with a test matrix, agent decision rules, what counts as ambiguous, response rules, reflection, guardrails, acceptance criteria (AC-01 to AC-22) and the demo requests.
 
 ### Changed
+
+- End-to-end tests run the server on a temporary copy of `data/`, so escalations never touch the repository; `data/escalations.jsonl` is git-ignored.
 
 - REQUIREMENTS section 4: tool error text *contains* the error code, because the MCP SDK puts `Error executing tool <name>: ` in front of it.
