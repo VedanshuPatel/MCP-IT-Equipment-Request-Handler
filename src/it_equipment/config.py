@@ -1,15 +1,18 @@
 """Application settings, read from environment variables.
 
-Each phase adds only the settings it needs. Values come from the process environment;
-``.env`` file support arrives with the agent in Phase 7.
+Each phase adds only the settings it needs. Values come from the process environment.
+``load_env_file()`` copies a local ``.env`` file into it first, without overriding variables
+that are already set; ``.env`` is git-ignored and holds the Foundry secrets.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 #: Hosts the MCP server may bind to. Any other address would expose it beyond this machine
 #: (requirement N1).
@@ -96,3 +99,58 @@ def data_dir(env: Mapping[str, str] | None = None) -> Path:
     """
     env = os.environ if env is None else env
     return Path(env.get("DATA_DIR", DEFAULT_DATA_DIR))
+
+
+def load_env_file(path: Path | None = None) -> bool:
+    """Load variables from a ``.env`` file into the process environment.
+
+    Variables that are already set win, so a real environment (CI, a shell export) is never
+    overridden by the file.
+
+    Args:
+        path: The file to read. Defaults to ``.env`` in the working directory.
+
+    Returns:
+        True if the file existed and was read.
+    """
+    return load_dotenv(path or Path(".env"), override=False)
+
+
+@dataclass(frozen=True, slots=True)
+class FoundrySettings:
+    """How to reach the Microsoft Foundry deployment that the agent uses.
+
+    Attributes:
+        endpoint: OpenAI-compatible base URL, ``https://<resource>.services.ai.azure.com/openai/v1``.
+        api_key: The Foundry key. Hidden from ``repr``, so it never appears in logs or tracebacks.
+        deployment: The deployment (model) name, for example ``gpt-6-astra``.
+    """
+
+    endpoint: str
+    api_key: str = field(repr=False)
+    deployment: str
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> FoundrySettings:
+        """Build settings from ``FOUNDRY_ENDPOINT``, ``FOUNDRY_API_KEY`` and ``FOUNDRY_DEPLOYMENT``.
+
+        Args:
+            env: Variables to read. Defaults to the process environment.
+
+        Returns:
+            The settings.
+
+        Raises:
+            ValueError: If any of the three variables is missing or empty. The message names
+                the missing variables, never their values.
+        """
+        env = os.environ if env is None else env
+        names = ("FOUNDRY_ENDPOINT", "FOUNDRY_API_KEY", "FOUNDRY_DEPLOYMENT")
+        missing = [name for name in names if not env.get(name, "").strip()]
+        if missing:
+            raise ValueError(f"Missing Foundry settings: {', '.join(missing)} (see .env.example)")
+        return cls(
+            endpoint=env["FOUNDRY_ENDPOINT"].strip(),
+            api_key=env["FOUNDRY_API_KEY"].strip(),
+            deployment=env["FOUNDRY_DEPLOYMENT"].strip(),
+        )
