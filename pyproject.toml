@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 # Runtime dependencies are added in the phase that first needs them.
 dependencies = [
     "mcp>=2.3",
+    "openai>=3.58",
+    "python-dotenv>=1.2",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +37,11 @@ addopts = [
     "--cov-branch",
     "--cov-report=term-missing",
     "--cov-fail-under=85",
+    # Live tests call the real Foundry model: opt-in with `pytest -m live --no-cov`.
+    "-m", "not live",
+]
+markers = [
+    "live: end-to-end test against the real Foundry model; needs FOUNDRY_* settings",
 ]
 
 # ------------------------------------------------------------------ ruff ----

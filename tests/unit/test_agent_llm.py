@@ -1,0 +1,184 @@
+"""Unit tests for ``FoundryLLM`` with the real OpenAI SDK and a mocked HTTP layer.
+
+Only the network is replaced: the ``foundry_llm`` fixture builds a real ``openai.OpenAI``
+client whose ``httpx2.MockTransport`` answers with a real Responses API body. The SDK's
+request building and reply parsing are both exercised, without a network or a key. The tools
+offered are the real server's, adapted by the real catalog.
+"""
+
+import json
+from collections.abc import Callable
+
+import anyio
+import httpx2
+import pytest
+from mcp.types import Tool
+from openai import OpenAI
+
+from it_equipment.agent.catalog import ToolSpec, build_catalog
+from it_equipment.agent.llm import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TIMEOUT_SECONDS,
+    FoundryLLM,
+    LLMError,
+    ToolCall,
+)
+from it_equipment.config import FoundrySettings
+from it_equipment.server import create_server
+
+ENDPOINT = "https://example.services.ai.azure.com/openai/v1"
+LOOKUP_E002 = ("get_employee_info", '{"thought": "I need the role first.", "employee_id": "E002"}')
+
+
+@pytest.fixture
+def catalog(tools) -> list[ToolSpec]:
+    """The agent's view of the real server's tools."""
+    return build_catalog(anyio.run(create_server(tools).list_tools))
+
+
+@pytest.fixture
+def http_requests() -> list[httpx2.Request]:
+    """Every HTTP request the OpenAI SDK sent during the test, in order."""
+    return []
+
+
+@pytest.fixture
+def foundry_llm(http_requests) -> Callable[..., FoundryLLM]:
+    """Factory: ``foundry_llm((name, arguments_json), ...)`` replies by calling those tools.
+
+    The reply is a real Responses API body: a reasoning item first, then one
+    ``function_call`` item per call. Each request is recorded in ``http_requests``.
+    """
+
+    def make(*calls: tuple[str, str]) -> FoundryLLM:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            http_requests.append(request)
+            function_calls = [
+                {
+                    "type": "function_call",
+                    "id": f"fc_{number}",
+                    "call_id": f"call_{number}",
+                    "name": name,
+                    "arguments": arguments,
+                    "status": "completed",
+                }
+                for number, (name, arguments) in enumerate(calls, start=1)
+            ]
+            return httpx2.Response(
+                200,
+                json={
+                    "id": "resp_1",
+                    "object": "response",
+                    "created_at": 0,
+                    "model": "gpt-6-astra",
+                    "status": "completed",
+                    "output": [{"type": "reasoning", "id": "rs_1", "summary": []}, *function_calls],
+                    "parallel_tool_calls": False,
+                    "tool_choice": "required",
+                    "tools": [],
+                },
+            )
+
+        client = OpenAI(
+            base_url=ENDPOINT,
+            api_key="test-key",
+            http_client=httpx2.Client(transport=httpx2.MockTransport(handler)),
+        )
+        return FoundryLLM(client, "gpt-6-astra")
+
+    return make
+
+
+def test_posts_one_request_that_requires_exactly_one_tool_call(foundry_llm, http_requests, catalog):
+    foundry_llm(LOOKUP_E002).next_call("be helpful", "<request>hi</request>", catalog)
+
+    (request,) = http_requests
+    assert request.method == "POST"
+    assert str(request.url) == f"{ENDPOINT}/responses"
+    assert request.headers["authorization"] == "Bearer test-key"
+    body = json.loads(request.content)
+    assert {key: value for key, value in body.items() if key != "tools"} == {
+        "model": "gpt-6-astra",
+        "instructions": "be helpful",
+        "input": "<request>hi</request>",
+        "tool_choice": "required",
+        "parallel_tool_calls": False,
+        "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+        "store": False,
+    }
+
+
+def test_offers_every_catalog_tool_as_a_strict_function(foundry_llm, http_requests, catalog):
+    foundry_llm(LOOKUP_E002).next_call("x", "y", catalog)
+
+    sent = json.loads(http_requests[0].content)["tools"]
+    assert sent == [
+        {
+            "type": "function",
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": spec.parameters,
+            "strict": True,
+        }
+        for spec in catalog
+    ]
+
+
+def test_tool_with_an_optional_argument_is_offered_without_strict_mode(foundry_llm, http_requests):
+    """Strict mode needs every argument to be required, so it is switched off here."""
+    search = Tool(
+        name="search",
+        description="Search the catalog.",
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+            "required": ["query"],
+        },
+    )
+
+    foundry_llm(LOOKUP_E002).next_call("x", "y", [ToolSpec.from_mcp(search)])
+
+    (sent,) = json.loads(http_requests[0].content)["tools"]
+    assert sent["strict"] is False
+
+
+def test_returns_the_call_with_the_thought_moved_out_of_the_arguments(foundry_llm, catalog):
+    """The call is found by type: ``output[0]`` is the reasoning item here."""
+    call = foundry_llm(LOOKUP_E002).next_call("x", "y", catalog)
+
+    assert call == ToolCall(
+        tool="get_employee_info",
+        thought="I need the role first.",
+        arguments={"employee_id": "E002"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("calls", "count"),
+    [((), 0), ((LOOKUP_E002, LOOKUP_E002), 2)],
+    ids=["no call", "two calls"],
+)
+def test_reply_must_hold_exactly_one_tool_call(foundry_llm, catalog, calls, count):
+    with pytest.raises(LLMError, match=f"gpt-6-astra returned {count} tool calls, expected 1"):
+        foundry_llm(*calls).next_call("x", "y", catalog)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ['{"thought": "cut off', '["E002"]'],
+    ids=["invalid JSON", "not an object"],
+)
+def test_arguments_must_be_a_json_object(foundry_llm, catalog, arguments):
+    with pytest.raises(LLMError, match="get_employee_info arguments are not a JSON object"):
+        foundry_llm(("get_employee_info", arguments)).next_call("x", "y", catalog)
+
+
+def test_from_settings_points_the_client_at_foundry_without_calling_it():
+    settings = FoundrySettings(endpoint=ENDPOINT, api_key="test-key", deployment="gpt-6-astra")
+
+    llm = FoundryLLM.from_settings(settings)
+
+    assert llm.model_name == "gpt-6-astra"
+    assert str(llm._client.base_url) == f"{ENDPOINT}/"
+    assert llm._client.timeout == DEFAULT_TIMEOUT_SECONDS
+    assert llm._client.max_retries == 2

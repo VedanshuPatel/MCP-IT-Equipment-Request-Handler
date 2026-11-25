@@ -2,11 +2,22 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 6, `flag_for_human_review`; the MCP server is complete._
+_Last updated: Phase 7, agent foundation._
 
 ## Current state
 
-The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. Each layer depends only on the one below it:
+The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent's foundation connects to it over MCP and lets the model make one tool call through native function calling:
+
+```
+scripts/one_call_demo.py
+  └─ first_call.run_one_tool_call
+       ├─ McpToolClient.list_tools ──► catalog: one ToolSpec per tool, with a required "thought" argument
+       ├─ FoundryLLM.next_call     ──► Foundry Responses API: strict function tools, exactly one call
+       │                               → ToolCall(tool, thought, arguments)
+       └─ McpToolClient.call_tool  ──► MCP server (arguments without "thought") ──► Observation
+```
+
+Server layers, each depending only on the one below it:
 
 ```
 scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; DomainError → ToolError
@@ -32,10 +43,17 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Rules | `src/it_equipment/rules.py` | One class per eligibility rule (E1 to E6), `DEFAULT_RULES` in order, `evaluate()` (first decision wins), `add_years()` |
 | Tools | `src/it_equipment/tools.py` | `EquipmentTools`: the four tool methods, with injected repositories, date clock and UTC clock; no MCP code |
 | MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers with tool annotations (three read-only, one idempotent write); `main()` serves Streamable HTTP |
+| Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, finds the call by type and moves `thought` out of the arguments |
+| Agent: MCP client | `src/it_equipment/agent/mcp_client.py` | `McpToolClient` wraps `mcp.Client`; every tool result becomes an `Observation` (`ok`, `data`, `text`) |
+| Agent: catalog | `src/it_equipment/agent/catalog.py` | Adapts the server's tool definitions (`list_tools`) into `ToolSpec`s: the server's argument schema plus a required `thought` argument; hides `ping`; keeps the read-only hint |
+| Agent: first call | `src/it_equipment/agent/first_call.py`, `prompts.py` | SCOPE step 5: the model picks one tool and the agent calls it over MCP; the request is wrapped in `<request>` tags |
+| Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`) and `load_env_file()` (`.env` never overrides real variables) |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
 | Clients | `scripts/smoke_client.py`, `scripts/hello_client.py` | Manual checks: `get_employee_info` for given IDs; `ping` |
-| Unit tests | `tests/unit/` | Tools, repository, settings, server module; no network, today fixed to 2026-11-24 |
+| Unit tests | `tests/unit/` | Tools, repositories, rules, settings, server and agent parts; no network, today fixed to 2026-11-24 |
+| Agent tests | `tests/agent/` | The agent with a scripted model (`ScriptedLLM` in `conftest.py`) and the real server in-process |
 | Integration tests | `tests/integration/` | In-process MCP client tests, and end-to-end tests against the real server process |
+| Live tests | `tests/live/` | Opt-in (`pytest -m live --no-cov`): the real Foundry model with the real server over HTTP; skipped without `FOUNDRY_*` settings; never run in CI |
 | CI | `.github/workflows/ci.yml` | Lint, format check and tests on Python 3.12 and 3.15 |
 | Config template | `.env.example` | Every setting planned across the phases |
 
@@ -74,3 +92,7 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-019 | 2026-11-24 | Escalations are appended to `escalations.jsonl` with sequential `ESC-NNNNNN` IDs and a duplicate guard on employee and exact request text; a lock serializes writes | Readable, append-only audit trail; flagging the same request twice cannot create two tickets; concurrent HTTP calls cannot share a ticket ID |
 | AD-020 | 2026-11-24 | Tools declare MCP annotations: the lookups are read-only, `flag_for_human_review` is a non-destructive, idempotent write | Clients and the agent can tell which call changes state; the hints match the real behavior and are tested |
 | AD-021 | 2026-11-24 | Every test writes tickets to a temporary folder; the end-to-end server runs on a copy of `data/` | Tests never modify the repository's data files |
+| AD-022 | 2026-11-24 | The agent reaches the model only through an `LLMClient` protocol: instructions, prompt and tools in, one `ToolCall` out; `FoundryLLM` is the first implementation | Tests use a scripted model, the Phase 12 local fallback plugs in without touching agent code, and the agent never handles OpenAI types |
+| AD-023 | 2026-11-24 | Native function calling: each MCP tool is offered as a strict function with an added required `thought` argument, and every reply must be exactly one tool call | The API enforces the argument schema, so there is no free text to parse; the required `thought` gives every ReAct step a visible Thought, which a reasoning model would otherwise keep hidden; one call per reply keeps one Thought, Action and Observation per step. Tools with optional arguments are sent without strict mode, which requires every argument |
+| AD-024 | 2026-11-24 | `FoundryLLM` finds the tool call by type, and uses a 60 s timeout, a 4,096-token reply budget and `store=False` | Reasoning models put a reasoning item first; the SDK's 10-minute default would hang the agent; reasoning tokens count toward the budget; requests are not stored by the service |
+| AD-025 | 2026-11-25 | Live end-to-end tests against Foundry are opt-in: marker `live`, deselected by default, skipped without settings; settings are read from the environment, then `.env`, without changing the process environment | CI stays free of secrets and cost; the model is not deterministic, so the assertions accept any sensible step; a passing run proves Foundry accepts the strict tool schemas |

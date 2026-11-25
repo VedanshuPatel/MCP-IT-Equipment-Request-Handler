@@ -1,18 +1,14 @@
 """End-to-end tests: the real server process over Streamable HTTP.
 
-The fixture starts ``python -m it_equipment.server`` on a free port, waits until it accepts
-connections, and stops it after the test module.
+The ``server_url`` fixture (``tests/conftest.py``) starts ``python -m it_equipment.server`` on a
+free port, waits until it accepts connections, and stops it after the test module.
 """
 
 import http.client
 import json
 import os
-import shutil
-import socket
 import subprocess
 import sys
-import time
-from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -22,59 +18,6 @@ from mcp import Client
 pytestmark = pytest.mark.anyio
 
 ROOT = Path(__file__).resolve().parents[2]
-STARTUP_TIMEOUT_SECONDS = 20
-
-
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def _wait_until_listening(port: int, process: subprocess.Popen) -> None:
-    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            raise RuntimeError(f"Server exited early with code {process.returncode}")
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                return
-        except OSError:
-            time.sleep(0.1)
-    raise TimeoutError(f"Server did not listen on port {port} within {STARTUP_TIMEOUT_SECONDS}s")
-
-
-@pytest.fixture(scope="module")
-def data_dir(tmp_path_factory) -> Path:
-    """A copy of the mock data, so escalations written by the server never touch data/."""
-    folder = tmp_path_factory.mktemp("data")
-    for name in ("employees.json", "policies.json"):
-        shutil.copy(ROOT / "data" / name, folder / name)
-    return folder
-
-
-@pytest.fixture(scope="module")
-def server_url(data_dir) -> Iterator[str]:
-    """Run the MCP server in a subprocess and yield its URL."""
-    port = _free_port()
-    env = {
-        **os.environ,
-        "MCP_HOST": "127.0.0.1",
-        "MCP_PORT": str(port),
-        "DATA_DIR": str(data_dir),
-    }
-    process = subprocess.Popen(
-        [sys.executable, "-m", "it_equipment.server"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait_until_listening(port, process)
-        yield f"http://127.0.0.1:{port}/mcp"
-    finally:
-        process.terminate()
-        process.wait(timeout=10)
 
 
 async def test_client_calls_get_policy_limits_over_http(server_url):
@@ -95,7 +38,7 @@ async def test_client_calls_check_request_eligibility_over_http(server_url):
     assert result.structured_content["reason_code"] == "UNKNOWN_ITEM"
 
 
-async def test_all_four_tools_are_listed_and_callable_over_http(server_url, data_dir):
+async def test_all_four_tools_are_listed_and_callable_over_http(server_url, server_data_dir):
     """AC-14."""
     calls = {
         "get_employee_info": {"employee_id": "E002"},
@@ -114,7 +57,7 @@ async def test_all_four_tools_are_listed_and_callable_over_http(server_url, data
     for name, args in calls.items():
         assert set(listed[name].input_schema["required"]) == set(args)
         assert not results[name].is_error, name
-    assert (data_dir / "escalations.jsonl").exists()
+    assert (server_data_dir / "escalations.jsonl").exists()
 
 
 async def test_client_calls_ping_over_http(server_url):
