@@ -1,16 +1,19 @@
 """Data access for the mock IT system (Repository pattern).
 
-The tools depend only on the ``EmployeeRepository`` and ``PolicyRepository`` protocols.
+The tools depend only on the ``EmployeeRepository``, ``PolicyRepository`` and
+``EscalationRepository`` protocols.
 Today the data comes from JSON files; moving to a database or an HR API means adding one
 class here, without changing the tools.
 """
 
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import TypeAdapter
 
-from it_equipment.models import Employee, ItemPolicy, PolicyTable
+from it_equipment.models import Employee, EscalationTicket, ItemPolicy, PolicyTable
 
 _EMPLOYEE_LIST = TypeAdapter(list[Employee])
 
@@ -93,3 +96,68 @@ class JsonPolicyRepository:
     def limits_for(self, role: str) -> dict[str, ItemPolicy] | None:
         """Return the policy per catalog item for a normalized role, or ``None`` if unknown."""
         return self._table.roles.get(role)
+
+
+class EscalationRepository(Protocol):
+    """Storage for escalation tickets: the only data the tools write."""
+
+    def find_open(self, employee_id: str, request: str) -> EscalationTicket | None:
+        """Return the open ticket for this employee and exact request text, if any."""
+        ...
+
+    def create(
+        self, employee_id: str, request: str, reason: str, created_at: datetime
+    ) -> EscalationTicket:
+        """Store a new open ticket with the next ticket ID and return it."""
+        ...
+
+
+class JsonlEscalationRepository:
+    """Escalation tickets stored as one JSON object per line (JSON Lines).
+
+    The file is created on the first ticket. Ticket IDs are sequential (``ESC-000001``,
+    ``ESC-000002``, ...), based on the number of tickets already stored. A lock makes
+    "read the next ID, then append" atomic for concurrent calls within one server process.
+
+    Args:
+        path: Path to the file, for example ``data/escalations.jsonl``.
+    """
+
+    def __init__(self, path: Path) -> None:
+        """Remember where tickets are stored."""
+        self._path = path
+        self._lock = threading.Lock()
+
+    def _tickets(self) -> list[EscalationTicket]:
+        if not self._path.exists():
+            return []
+        lines = self._path.read_text(encoding="utf-8").splitlines()
+        return [EscalationTicket.model_validate_json(line) for line in lines if line.strip()]
+
+    def find_open(self, employee_id: str, request: str) -> EscalationTicket | None:
+        """Return the open ticket for this employee and exact request text, if any."""
+        with self._lock:
+            for ticket in self._tickets():
+                if (ticket.employee_id, ticket.request, ticket.status) == (
+                    employee_id,
+                    request,
+                    "open",
+                ):
+                    return ticket
+        return None
+
+    def create(
+        self, employee_id: str, request: str, reason: str, created_at: datetime
+    ) -> EscalationTicket:
+        """Store a new open ticket with the next ticket ID and return it."""
+        with self._lock:
+            ticket = EscalationTicket(
+                ticket_id=f"ESC-{len(self._tickets()) + 1:06d}",
+                employee_id=employee_id,
+                request=request,
+                reason=reason,
+                created_at=created_at,
+            )
+            with self._path.open("a", encoding="utf-8") as file:
+                file.write(ticket.model_dump_json() + "\n")
+        return ticket

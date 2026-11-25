@@ -1,11 +1,16 @@
 """Unit tests for loading employee records from JSON."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from it_equipment.repositories import JsonEmployeeRepository, JsonPolicyRepository
+from it_equipment.repositories import (
+    JsonEmployeeRepository,
+    JsonlEscalationRepository,
+    JsonPolicyRepository,
+)
 
 
 def _write(tmp_path, records):
@@ -151,3 +156,41 @@ def test_invalid_item_policy_is_rejected(tmp_path, policy, message):
 def test_missing_policy_file_is_reported(tmp_path):
     with pytest.raises(FileNotFoundError):
         JsonPolicyRepository(tmp_path / "missing.json")
+
+
+# ---- escalations ----
+
+CREATED = datetime(2026, 11, 24, 9, 30, tzinfo=UTC)
+
+
+def test_missing_escalation_file_means_no_tickets(tmp_path):
+    repository = JsonlEscalationRepository(tmp_path / "escalations.jsonl")
+
+    assert repository.find_open("E004", "anything") is None
+
+
+def test_ticket_ids_continue_from_an_existing_file(tmp_path):
+    path = tmp_path / "escalations.jsonl"
+    JsonlEscalationRepository(path).create("E001", "first", "UNKNOWN_ITEM: desk", CREATED)
+
+    reopened = JsonlEscalationRepository(path)
+    ticket = reopened.create("E002", "second", "UNKNOWN_ITEM: chair", CREATED)
+
+    assert ticket.ticket_id == "ESC-000002"
+    assert reopened.find_open("E001", "first").ticket_id == "ESC-000001"
+
+
+def test_find_open_matches_employee_and_exact_request_only(tmp_path):
+    repository = JsonlEscalationRepository(tmp_path / "escalations.jsonl")
+    repository.create("E001", "Can I get a desk?", "UNKNOWN_ITEM: desk", CREATED)
+
+    assert repository.find_open("E002", "Can I get a desk?") is None
+    assert repository.find_open("E001", "can i get a desk?") is None
+
+
+def test_corrupt_escalation_line_is_reported(tmp_path):
+    path = tmp_path / "escalations.jsonl"
+    path.write_text('{"ticket_id": "not-a-ticket"}\n')
+
+    with pytest.raises(ValidationError):
+        JsonlEscalationRepository(path).find_open("E001", "x")

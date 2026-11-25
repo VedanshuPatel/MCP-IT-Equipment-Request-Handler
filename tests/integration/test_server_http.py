@@ -7,6 +7,7 @@ connections, and stops it after the test module.
 import http.client
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -44,14 +45,23 @@ def _wait_until_listening(port: int, process: subprocess.Popen) -> None:
 
 
 @pytest.fixture(scope="module")
-def server_url() -> Iterator[str]:
+def data_dir(tmp_path_factory) -> Path:
+    """A copy of the mock data, so escalations written by the server never touch data/."""
+    folder = tmp_path_factory.mktemp("data")
+    for name in ("employees.json", "policies.json"):
+        shutil.copy(ROOT / "data" / name, folder / name)
+    return folder
+
+
+@pytest.fixture(scope="module")
+def server_url(data_dir) -> Iterator[str]:
     """Run the MCP server in a subprocess and yield its URL."""
     port = _free_port()
     env = {
         **os.environ,
         "MCP_HOST": "127.0.0.1",
         "MCP_PORT": str(port),
-        "DATA_DIR": str(ROOT / "data"),
+        "DATA_DIR": str(data_dir),
     }
     process = subprocess.Popen(
         [sys.executable, "-m", "it_equipment.server"],
@@ -83,6 +93,28 @@ async def test_client_calls_check_request_eligibility_over_http(server_url):
 
     assert not result.is_error
     assert result.structured_content["reason_code"] == "UNKNOWN_ITEM"
+
+
+async def test_all_four_tools_are_listed_and_callable_over_http(server_url, data_dir):
+    """AC-14."""
+    calls = {
+        "get_employee_info": {"employee_id": "E002"},
+        "get_policy_limits": {"role": "manager"},
+        "check_request_eligibility": {"employee_id": "E002", "item": "laptop"},
+        "flag_for_human_review": {
+            "employee_id": "E001",
+            "request": "Can I get a standing desk?",
+            "reason": "UNKNOWN_ITEM: standing desk is not in the catalog",
+        },
+    }
+    async with Client(server_url) as client:
+        listed = {tool.name: tool for tool in (await client.list_tools()).tools}
+        results = {name: await client.call_tool(name, args) for name, args in calls.items()}
+
+    for name, args in calls.items():
+        assert set(listed[name].input_schema["required"]) == set(args)
+        assert not results[name].is_error, name
+    assert (data_dir / "escalations.jsonl").exists()
 
 
 async def test_client_calls_ping_over_http(server_url):
