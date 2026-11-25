@@ -1,7 +1,11 @@
 """Shared pytest fixtures."""
 
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +15,10 @@ from it_equipment.repositories import (
     JsonPolicyRepository,
 )
 from it_equipment.tools import EquipmentTools
+
+if TYPE_CHECKING:  # agent types are only needed for annotations here
+    from it_equipment.agent.catalog import ToolSpec
+    from it_equipment.agent.llm import ToolCall
 
 #: The repository's mock data (REQUIREMENTS 2.3, 2.4 and 3).
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -62,3 +70,31 @@ def tools(employee_repository, policy_repository, escalation_repository) -> Equi
         clock=lambda: TODAY,
         now=lambda: NOW,
     )
+
+
+class ScriptedLLM:
+    """A stand-in for the real model: returns prepared tool calls in order, records each request.
+
+    The real model is a network service, so agent tests use this to stay fast,
+    deterministic and free of API keys.
+    """
+
+    model_name = "scripted"
+
+    def __init__(self, calls: list[ToolCall]) -> None:
+        """Queue the tool calls to return, first one first."""
+        self._calls = list(calls)
+        self.requests: list[tuple[str, str, list[ToolSpec]]] = []
+
+    def next_call(self, instructions: str, prompt: str, tools: Sequence[ToolSpec]) -> ToolCall:
+        """Record the request and return the next prepared tool call."""
+        self.requests.append((instructions, prompt, list(tools)))
+        if not self._calls:
+            raise AssertionError("ScriptedLLM ran out of tool calls")
+        return self._calls.pop(0)
+
+
+@pytest.fixture
+def scripted_llm() -> Callable[..., ScriptedLLM]:
+    """Factory: ``scripted_llm(call_1, call_2)`` builds a model that replays those calls."""
+    return lambda *calls: ScriptedLLM(list(calls))
