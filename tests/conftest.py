@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Iterator, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,6 +34,9 @@ TODAY = date(2026, 11, 24)
 
 #: The fixed "now" stamped on escalation tickets in tests.
 NOW = datetime(2026, 11, 24, 9, 30, tzinfo=UTC)
+
+#: Seconds a server process gets to start listening.
+STARTUP_TIMEOUT_SECONDS = 20
 
 
 @pytest.fixture
@@ -70,6 +79,61 @@ def tools(employee_repository, policy_repository, escalation_repository) -> Equi
         clock=lambda: TODAY,
         now=lambda: NOW,
     )
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _wait_until_listening(port: int, process: subprocess.Popen) -> None:
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"Server exited early with code {process.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise TimeoutError(f"Server did not listen on port {port} within {STARTUP_TIMEOUT_SECONDS}s")
+
+
+@pytest.fixture(scope="module")
+def server_data_dir(tmp_path_factory) -> Path:
+    """A copy of the mock data, so escalations written by a server process never touch data/."""
+    folder = tmp_path_factory.mktemp("data")
+    for name in ("employees.json", "policies.json"):
+        shutil.copy(DATA_DIR / name, folder / name)
+    return folder
+
+
+@pytest.fixture(scope="module")
+def server_url(server_data_dir) -> Iterator[str]:
+    """Run ``python -m it_equipment.server`` on a free port and yield its URL.
+
+    One server process per test module; it reads and writes ``server_data_dir``.
+    """
+    port = _free_port()
+    env = {
+        **os.environ,
+        "MCP_HOST": "127.0.0.1",
+        "MCP_PORT": str(port),
+        "DATA_DIR": str(server_data_dir),
+    }
+    process = subprocess.Popen(
+        [sys.executable, "-m", "it_equipment.server"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_until_listening(port, process)
+        yield f"http://127.0.0.1:{port}/mcp"
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 class ScriptedLLM:
