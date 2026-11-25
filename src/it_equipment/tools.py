@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from it_equipment import rules
@@ -19,16 +19,37 @@ from it_equipment.errors import (
     InvalidInputError,
     UnknownRoleError,
 )
-from it_equipment.models import EligibilityResult, EmployeeInfo, ItemLimit, PolicyLimits
+from it_equipment.models import (
+    MAX_REASON_LENGTH,
+    MAX_REQUEST_LENGTH,
+    EligibilityResult,
+    EmployeeInfo,
+    EscalationResult,
+    ItemLimit,
+    PolicyLimits,
+)
 from it_equipment.repositories import (
     EmployeeRepository,
+    EscalationRepository,
     JsonEmployeeRepository,
+    JsonlEscalationRepository,
     JsonPolicyRepository,
     PolicyRepository,
 )
 
 #: Returns "today". Injected so tests can fix the date (REQUIREMENTS conventions).
 Clock = Callable[[], date]
+
+#: Returns the current time in UTC. Injected so tests can fix ticket timestamps.
+Now = Callable[[], datetime]
+
+#: Employee ID used for escalations when the request contains none (REQUIREMENTS 4.4).
+UNKNOWN_EMPLOYEE = "UNKNOWN"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
 
 _EMPLOYEE_ID = re.compile(r"E\d{3}")
 
@@ -65,26 +86,33 @@ class EquipmentTools:
     Args:
         employees: Where employee records come from.
         policies: Where the policy table comes from.
+        escalations: Where escalation tickets are stored.
         clock: Returns today's date. Defaults to the real date.
+        now: Returns the current UTC time, for ticket timestamps. Defaults to the real time.
     """
 
     def __init__(
         self,
         employees: EmployeeRepository,
         policies: PolicyRepository,
+        escalations: EscalationRepository,
         clock: Clock = date.today,
+        now: Now = _utc_now,
     ) -> None:
         """Store the dependencies."""
         self._employees = employees
         self._policies = policies
+        self._escalations = escalations
         self._clock = clock
+        self._now = now
 
     @classmethod
     def from_data_dir(cls, data_dir: Path, clock: Clock = date.today) -> EquipmentTools:
         """Build the tools from the JSON files in ``data_dir``.
 
         Args:
-            data_dir: Folder that holds ``employees.json`` and ``policies.json``.
+            data_dir: Folder that holds ``employees.json`` and ``policies.json``; escalations
+                are written to ``escalations.jsonl`` in the same folder.
             clock: Returns today's date. Defaults to the real date.
 
         Returns:
@@ -93,6 +121,7 @@ class EquipmentTools:
         return cls(
             JsonEmployeeRepository(data_dir / "employees.json"),
             JsonPolicyRepository(data_dir / "policies.json"),
+            JsonlEscalationRepository(data_dir / "escalations.jsonl"),
             clock,
         )
 
@@ -187,3 +216,40 @@ class EquipmentTools:
             today=self._clock(),
         )
         return rules.evaluate(context)
+
+    def flag_for_human_review(
+        self, employee_id: str, request: str, reason: str
+    ) -> EscalationResult:
+        """Escalate a request to a human reviewer by creating a ticket (REQUIREMENTS 4.4).
+
+        This is the only tool with a side effect. Flagging the same employee and identical
+        request text again returns the existing open ticket instead of creating a second one.
+
+        Args:
+            employee_id: A well-formed ID (it may be unknown), or ``UNKNOWN`` when the
+                request contains none.
+            request: The original request text, 1 to 2,000 characters. Stored unchanged.
+            reason: Why it needs a human, 1 to 500 characters, normally starting with an
+                escalation code such as ``EXCEPTION_REQUESTED:``.
+
+        Returns:
+            The ticket ID, its status and whether it already existed.
+
+        Raises:
+            InvalidEmployeeIdError: If the ID is neither well-formed nor ``UNKNOWN``.
+            InvalidInputError: If the request or reason is empty or too long.
+        """
+        normalized_id = employee_id.strip().upper()
+        if normalized_id != UNKNOWN_EMPLOYEE:
+            normalized_id = normalize_employee_id(employee_id)
+        if not request.strip() or len(request) > MAX_REQUEST_LENGTH:
+            raise InvalidInputError(f"request must be 1 to {MAX_REQUEST_LENGTH} characters")
+        reason = reason.strip()
+        if not reason or len(reason) > MAX_REASON_LENGTH:
+            raise InvalidInputError(f"reason must be 1 to {MAX_REASON_LENGTH} characters")
+
+        existing = self._escalations.find_open(normalized_id, request)
+        if existing is not None:
+            return EscalationResult(ticket_id=existing.ticket_id, status="open", duplicate=True)
+        ticket = self._escalations.create(normalized_id, request, reason, self._now())
+        return EscalationResult(ticket_id=ticket.ticket_id, status="open", duplicate=False)

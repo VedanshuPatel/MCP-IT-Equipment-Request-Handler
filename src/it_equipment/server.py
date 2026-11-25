@@ -15,12 +15,18 @@ from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from it_equipment import __version__
 from it_equipment.config import ServerSettings, data_dir
 from it_equipment.errors import DomainError
-from it_equipment.models import EligibilityResult, EmployeeInfo, PolicyLimits
+from it_equipment.models import (
+    EligibilityResult,
+    EmployeeInfo,
+    EscalationResult,
+    PolicyLimits,
+)
 from it_equipment.tools import EquipmentTools
 
 SERVER_NAME = "it-equipment"
@@ -34,6 +40,26 @@ RoleArg = Annotated[
 ItemArg = Annotated[
     str, Field(description="Catalog item requested: laptop, monitor, headset or keyboard.")
 ]
+EscalationEmployeeArg = Annotated[
+    str,
+    Field(description="Employee ID such as 'E004', or 'UNKNOWN' when the request has none."),
+]
+RequestArg = Annotated[str, Field(description="The employee's original request text.")]
+ReasonArg = Annotated[
+    str,
+    Field(
+        description="Why a human must decide, starting with an escalation code, e.g. "
+        "'EXCEPTION_REQUESTED: laptop damaged by a spill'."
+    ),
+]
+
+#: The three lookup tools only read data.
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+#: flag_for_human_review writes a ticket; calling it again with the same input is harmless.
+CREATES_TICKET = ToolAnnotations(
+    read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+)
 
 
 def ping() -> str:
@@ -75,21 +101,21 @@ def create_server(tools: EquipmentTools | None = None) -> MCPServer:
         version=__version__,
         instructions="Tools for checking IT equipment requests against company policy.",
     )
-    server.tool()(ping)
+    server.tool(annotations=READ_ONLY)(ping)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     def get_employee_info(employee_id: EmployeeIdArg) -> EmployeeInfo:
         """Look up an employee's role, tenure and current equipment on file."""
         with _as_tool_error():
             return tools.get_employee_info(employee_id)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     def get_policy_limits(role: RoleArg) -> PolicyLimits:
         """List what a role is eligible for: maximum quantity and replacement interval per item."""
         with _as_tool_error():
             return tools.get_policy_limits(role)
 
-    @server.tool()
+    @server.tool(annotations=READ_ONLY)
     def check_request_eligibility(employee_id: EmployeeIdArg, item: ItemArg) -> EligibilityResult:
         """Check whether the employee may receive one unit of the item today under policy.
 
@@ -98,6 +124,18 @@ def create_server(tools: EquipmentTools | None = None) -> MCPServer:
         """
         with _as_tool_error():
             return tools.check_request_eligibility(employee_id, item)
+
+    @server.tool(annotations=CREATES_TICKET)
+    def flag_for_human_review(
+        employee_id: EscalationEmployeeArg, request: RequestArg, reason: ReasonArg
+    ) -> EscalationResult:
+        """Escalate a request to a human reviewer by creating a ticket.
+
+        Use it whenever the request should not be decided automatically. Flagging the same
+        employee and request again returns the existing ticket.
+        """
+        with _as_tool_error():
+            return tools.flag_for_human_review(employee_id, request, reason)
 
     return server
 
