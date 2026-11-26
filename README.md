@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 11, observability: the ReAct agent works inside guardrails with a reviewer for every draft, and each request can be followed as one OpenTelemetry trace across the agent and the MCP server. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 12, model fallback: the ReAct agent works inside guardrails with a reviewer for every draft, can be traced end to end, and switches to a hosted fallback model when Foundry has an outage. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -15,7 +15,7 @@ An internal IT equipment request handler, built in two parts:
 |---|---|
 | Language | Python ≥ 3.12 |
 | MCP | `mcp` 2.x over Streamable HTTP |
-| LLM | Microsoft Foundry (OpenAI-compatible Responses API), with a small local model as fallback |
+| LLM | Microsoft Foundry (OpenAI-compatible Responses API), with a keyless hosted fallback model (OVHcloud AI Endpoints) |
 | Observability | OpenTelemetry (SDK, console exporter); `mcp`'s built-in spans plus the agent's own |
 | Quality | pytest with coverage; ruff for lint, formatting and docstrings |
 | CI | GitHub Actions |
@@ -97,6 +97,7 @@ Put your Foundry settings in `.env` (copy `.env.example`; `.env` is git-ignored)
 FOUNDRY_ENDPOINT=https://<your-resource>.services.ai.azure.com/openai/v1
 FOUNDRY_API_KEY=<your-api-key>
 FOUNDRY_DEPLOYMENT=<your-deployment>
+# FOUNDRY_MAX_RETRIES=2   # optional: retries before switching to the fallback
 ```
 
 Then, with the server running in another terminal:
@@ -113,6 +114,23 @@ Guardrails (REQUIREMENTS section 9) surround the model. A request that is empty,
 Reflection (REQUIREMENTS section 8): every draft decision that passes the guardrails goes to a reviewer, a separate model call with its own instructions. It compares the draft with the tool results of the run and answers `confirmed`, or `revise` with the issues to fix, for example a promised delivery date. The verdict shows in the trace as the observation of the `submit_decision` step. After one `revise` the agent gets one more attempt; a second rejected draft is escalated.
 
 The default test run never calls Foundry: it uses a scripted model and a mocked HTTP layer, so CI needs no key. To check against the real model, run the live tests (`pytest -m live --no-cov`, see above).
+
+### Fallback model (built in, no key)
+
+When Foundry is unreachable, times out, is rate-limited or returns a server error, a second model takes over: by default `Qwen3.5-397B-A17B` on [OVHcloud AI Endpoints](https://docs.ovhcloud.com/en/guides/public-cloud/ai-machine-learning/ai-endpoints-getting-started), called through the same `openai` library in anonymous mode. It needs no API key and no download, and works with no settings.
+
+To use a different model, set any of these optional variables in `.env`. The fallback is always called without a key, so the replacement must be a keyless, OpenAI-compatible Chat Completions endpoint that supports tool calling:
+
+```
+FALLBACK_ENDPOINT=https://oai.endpoints.kepler.ai.cloud.ovh.net/v1   # default
+FALLBACK_MODEL=Qwen3.5-397B-A17B                                     # default
+FALLBACK_MAX_RETRIES=8                                               # default: retries for rate limits and server errors
+```
+
+- OVHcloud's anonymous mode allows 2 requests per minute, so a run on the fallback takes a minute or two; with the default 8 retries the client waits out a rate limit (HTTP 429) for up to about 40 seconds per call.
+- While the fallback answers, the request and the tool results are sent to OVHcloud.
+- A configuration problem with Foundry, such as a wrong key or endpoint, is not hidden by the fallback: the request is escalated and the trace names the error.
+- After an outage the fallback answers for the rest of the run, and the `llm.generate` spans record which model answered.
 
 ### Observability (OpenTelemetry)
 
