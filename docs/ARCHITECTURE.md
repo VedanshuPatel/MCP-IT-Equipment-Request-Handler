@@ -2,21 +2,29 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 8, ReAct agent._
+_Last updated: Phase 9, guardrails._
 
 ## Current state
 
-The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent connects to it over MCP and runs the ReAct loop with native function calling:
+The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent connects to it over MCP and runs the ReAct loop with native function calling, inside guardrails:
 
 ```
 scripts/run_agent.py
   └─ react.run_agent(llm, mcp, request)
+       G1-G3 input checks ── blocked ──────────────────────────────────────────► agent escalation
        tools = McpToolClient.list_tools() + submit_decision      (each with a required "thought")
-       repeat, at most 8 times:
+       repeat, at most AGENT_MAX_STEPS (8) times:
          FoundryLLM.next_call(instructions, request, tools, history) ──► ToolCall(tool, thought, arguments)
-         ├─ submit_decision ──► Decision (validated) ──► AgentResult(steps, decision)   end
-         └─ MCP tool        ──► McpToolClient.call_tool ──► Observation ──► Step, added to history
-       no decision after 8 steps ──► AgentResult(steps, stop="step_limit")
+           invalid reply: retry once (G4); twice, or model unreachable ──────► agent escalation
+         ├─ submit_decision ──► SubmittedDecision ──► G8-G10 output checks
+         │                        ├─ pass ──► AgentResult(decided by the model)                end
+         │                        └─ fail ────────────────────────────────────► agent escalation
+         ├─ blocked by G5 or G7 ──► error Observation ──► Step
+         └─ MCP tool ──► McpToolClient.call_tool ──► Observation ──► Step, added to history
+       no decision after the last step (G6) ───────────────────────────────────► agent escalation
+
+agent escalation: flag_for_human_review filed by code ──► Decision(escalate, MISSING_EMPLOYEE_ID |
+                  GUARDRAIL_TRIGGERED | AGENT_ERROR, ticket) ──► AgentResult(decided by the agent)
 ```
 
 Server layers, each depending only on the one below it:
@@ -48,11 +56,12 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, replays the steps so far as function calls and results, finds the call by type and moves `thought` out of the arguments |
 | Agent: MCP client | `src/it_equipment/agent/mcp_client.py` | `McpToolClient` wraps `mcp.Client`; every tool result becomes an `Observation` (`ok`, `data`, `text`) |
 | Agent: catalog | `src/it_equipment/agent/catalog.py` | Adapts the server's tool definitions (`list_tools`) into `ToolSpec`s: the server's argument schema plus a required `thought` argument; hides `ping`; keeps the read-only hint |
-| Agent: ReAct loop | `src/it_equipment/agent/react.py` | `run_agent()`: one tool call per step until `submit_decision` or the step limit; tool errors and invalid decisions become observations |
-| Agent: decision | `src/it_equipment/agent/decision.py` | `Decision` (REQUIREMENTS 6.1) and the agent-local `submit_decision` tool generated from it |
+| Agent: ReAct loop | `src/it_equipment/agent/react.py` | `run_agent()`: one tool call per step until an accepted decision; runs every guardrail; files the agent's own escalations; always returns a decision |
+| Agent: guardrails | `src/it_equipment/agent/guardrails.py` | `check_input` (G1 to G3), `check_step` (G5, G7), `check_output` (G8 to G10): plain checks over the request and the recorded steps |
+| Agent: decision | `src/it_equipment/agent/decision.py` | `Decision` (the final record, REQUIREMENTS 6.1) and `SubmittedDecision` (what the model may submit); the `submit_decision` tool is generated from the latter |
 | Agent: trace | `src/it_equipment/agent/trace.py` | `Step` and `AgentResult`; console text (`format_step`, `format_result`) and JSON (`to_dict`) |
 | Agent: prompts | `src/it_equipment/agent/prompts.py` | The agent instructions (decision table, exceptions, response rules) and the `<request>` delimiters |
-| Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`) and `load_env_file()` (`.env` never overrides real variables) |
+| Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`), `agent_max_steps()` (`AGENT_MAX_STEPS`, default 8) and `load_env_file()` (`.env` never overrides real variables) |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
 | Clients | `scripts/run_agent.py`, `scripts/smoke_client.py`, `scripts/hello_client.py` | The agent on one request with a live trace; manual MCP checks: `get_employee_info` for given IDs, `ping` |
 | Unit tests | `tests/unit/` | Tools, repositories, rules, settings, server and agent parts; no network, today fixed to 2026-11-24 |
@@ -104,3 +113,8 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-026 | 2026-11-25 | The ReAct loop makes exactly one tool call per step; MCP tool errors and invalid `submit_decision` arguments go back to the model as observations; the run ends at `submit_decision` or after 8 steps without a decision | One Thought, Action and Observation per step keeps the trace readable; the model can correct itself; the loop always terminates. Turning a run without a decision into an escalation is a guardrail (next phase) |
 | AD-027 | 2026-11-25 | Every request to the model replays the steps so far as function calls (with their `thought`) and their results; hidden reasoning items are not replayed | `store=False` keeps nothing on the service; the explicit thoughts carry the reasoning from step to step; the history stays provider-neutral, so a local model can use it too |
 | AD-028 | 2026-11-25 | `submit_decision` is an agent-local strict tool generated from the `Decision` Pydantic model; it offers only the reason codes the model may give | One source for the schema and the validation; the codes for missing IDs, guardrails and agent errors are filed by code, never chosen by the model |
+| AD-029 | 2026-11-26 | Guardrails are plain code around the model: input checks before any model call, step checks before a tool runs, output checks on the draft decision against the recorded tool results | Deterministic and testable without a model; the model cannot talk its way past them; a blocked tool call becomes an observation so the model can choose again |
+| AD-030 | 2026-11-26 | Escalation is the safety default: every failure path files a ticket from the agent's own code (`MISSING_EMPLOYEE_ID`, `GUARDRAIL_TRIGGERED`, `AGENT_ERROR`), and every run ends with a decision | Works even when the model misbehaves or cannot be reached; a human always sees the request; the store's duplicate guard reuses a ticket the model already filed |
+| AD-031 | 2026-11-26 | The final record (`Decision`) is wider than what the model may submit (`SubmittedDecision`): only code uses the agent's codes and a missing item | The model cannot choose `AGENT_ERROR` or `GUARDRAIL_TRIGGERED`; one record type covers both kinds of decision |
+| AD-032 | 2026-11-26 | A failed request to Foundry raises `LLMCallError` (error type and cause, never the key), and the loop turns it into an `AGENT_ERROR` escalation | A network or configuration problem is reported in the trace instead of a traceback; the planned fallback model can hook in at the same place |
+| AD-033 | 2026-11-26 | The agent always sends the employee's original text as the ticket's `request` | A reviewer reads the employee's own words, never the model's paraphrase |
