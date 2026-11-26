@@ -24,6 +24,7 @@ StopReason = Literal[
     "output_guardrail",
     "invalid_output",
     "model_error",
+    "reflection",
     "step_limit",
 ]
 

@@ -5,20 +5,24 @@ one tool call. MCP tools are called on the server; ``submit_decision`` ends the 
 errors, blocked calls and invalid decisions become observations, so the model can correct
 itself.
 
+Every draft that passes the output guardrails goes to a separate reviewer (REQUIREMENTS 8). Its
+verdict is the observation of the ``submit_decision`` call: ``confirmed`` ends the run, and
+``revise`` gives the agent one more attempt.
+
 Guardrails (REQUIREMENTS 9) surround the loop, and escalation is the safety default: a
-blocked request, a second invalid reply, the step limit, a model that cannot be reached, or a
-draft the output checks reject all end in an escalation that the agent's own code files with
-``flag_for_human_review``. A run therefore always ends with a decision.
+blocked request, a second invalid reply, the step limit, a model that cannot be reached, a
+draft the output checks reject, or a second rejected draft all end in an escalation that the
+agent's own code files with ``flag_for_human_review``. A run therefore always ends with a
+decision.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from it_equipment.agent.catalog import ToolSpec
 from it_equipment.agent.decision import (
     SUBMIT_DECISION,
     SUBMIT_DECISION_TOOL,
@@ -34,14 +38,24 @@ from it_equipment.agent.guardrails import (
     check_step,
     employee_id_in,
 )
-from it_equipment.agent.llm import History, LLMCallError, LLMClient, LLMError, ToolCall
+from it_equipment.agent.llm import (
+    LLMCallError,
+    LLMClient,
+    LLMError,
+    ToolCall,
+    next_call_with_retry,
+)
 from it_equipment.agent.mcp_client import McpToolClient, Observation
 from it_equipment.agent.prompts import AGENT_INSTRUCTIONS, request_block
+from it_equipment.agent.reflection import review_draft, review_observation
 from it_equipment.agent.trace import AgentResult, Step, StopReason
 from it_equipment.config import DEFAULT_AGENT_MAX_STEPS
 
 #: The longest ticket reason the escalation store accepts.
 MAX_REASON_LENGTH = 500
+
+#: Revisions allowed after the reviewer's first ``revise`` (REQUIREMENTS 8: one more attempt).
+MAX_REVISIONS = 1
 
 #: Plain-language reasons for the escalations the agent files itself (rule R6: no codes).
 _WHY = {
@@ -105,44 +119,47 @@ async def _react_loop(
     max_steps: int,
     on_step: OnStep,
 ) -> AgentResult:
-    """Run Thought, Action, Observation steps until the model's decision passes the checks.
+    """Run Thought, Action, Observation steps until the reviewer confirms a decision.
 
     Raises:
-        _Escalation: When an output guardrail or the step limit (G6) ends the run.
+        _Escalation: When an output guardrail, a second rejected draft or the step limit (G6)
+            ends the run.
         LLMError: After two invalid model replies in a row (G4).
         LLMCallError: When the model cannot be reached.
     """
     tools = [*await mcp.list_tools(), SUBMIT_DECISION_TOOL]
     allowed = [spec.name for spec in tools]
     prompt = request_block(request)
+    revisions = 0
     for number in range(1, max_steps + 1):
         history = [(step.call, step.observation.text) for step in steps]
-        call = _next_call(llm, prompt, tools, history)
-        if call.tool == SUBMIT_DECISION:
-            try:
-                draft = SubmittedDecision.model_validate(call.arguments)
-            except ValidationError as error:
-                observation = _rejected(call, error)
+        call = next_call_with_retry(llm, AGENT_INSTRUCTIONS, prompt, tools, history)
+        if call.tool != SUBMIT_DECISION:
+            if problem := check_step(call, allowed, steps):
+                observation = Observation(
+                    call.tool, call.arguments, ok=False, data=None, text=problem
+                )
             else:
-                if violation := check_output(draft, steps):
-                    raise _Escalation("output_guardrail", violation.code, str(violation))
-                return AgentResult(request, tuple(steps), "decided", draft, call.thought)
-        elif problem := check_step(call, allowed, steps):
-            observation = Observation(call.tool, call.arguments, ok=False, data=None, text=problem)
-        else:
-            observation = await mcp.call_tool(call.tool, _arguments_to_send(call, request))
-        _record(steps, Step(number, call, observation), on_step)
+                observation = await mcp.call_tool(call.tool, _arguments_to_send(call, request))
+            _record(steps, Step(number, call, observation), on_step)
+            continue
+
+        try:
+            draft = SubmittedDecision.model_validate(call.arguments)
+        except ValidationError as error:
+            _record(steps, Step(number, call, _rejected(call, error)), on_step)
+            continue
+        if violation := check_output(draft, steps):
+            raise _Escalation("output_guardrail", violation.code, str(violation))
+        review = review_draft(llm, request, steps, draft)
+        _record(steps, Step(number, call, review_observation(call, review)), on_step)
+        if review.verdict == "confirmed":
+            return AgentResult(request, tuple(steps), "decided", draft, call.thought)
+        revisions += 1
+        if revisions > MAX_REVISIONS:
+            reason = "reflection: the revised draft was not confirmed either"
+            raise _Escalation("reflection", "AGENT_ERROR", reason)
     raise _Escalation("step_limit", "AGENT_ERROR", f"G6: no decision in {max_steps} steps")
-
-
-def _next_call(
-    llm: LLMClient, prompt: str, tools: Sequence[ToolSpec], history: History
-) -> ToolCall:
-    """Ask the model for its next call, with one retry after an invalid reply (G4)."""
-    try:
-        return llm.next_call(AGENT_INSTRUCTIONS, prompt, tools, history)
-    except LLMError:
-        return llm.next_call(AGENT_INSTRUCTIONS, prompt, tools, history)
 
 
 def _arguments_to_send(call: ToolCall, request: str) -> dict:
