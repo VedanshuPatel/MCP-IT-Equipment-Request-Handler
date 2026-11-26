@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 9, guardrails: the ReAct agent investigates a request with the MCP tools and submits a decision, inside input, step and output guardrails that escalate whenever the request or the model cannot be trusted. Reflection comes next. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 10, reflection: the ReAct agent investigates a request with the MCP tools inside guardrails, and a separate reviewer checks every draft decision before it becomes final. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -109,6 +109,8 @@ python scripts/run_agent.py "Hi, I'm E003 and I'd like a second monitor."   # an
 Each step prints as it happens (Thought, Action, Observation), followed by the final decision, its reason code, who decided (the model, or the agent's own code) and the response to the employee.
 
 Guardrails (REQUIREMENTS section 9) surround the model. A request that is empty, too long, has no employee ID or contains a prompt-injection phrase is escalated before the model is called. A tool that was not offered, or a second escalation, is refused. An approval or denial needs a matching eligibility result in the same run, and an escalation needs the ticket that run filed. Two invalid model replies in a row, the step limit (`AGENT_MAX_STEPS`, default 8) or a model that cannot be reached all end in an escalation with a ticket, never in a crash.
+
+Reflection (REQUIREMENTS section 8): every draft decision that passes the guardrails goes to a reviewer, a separate model call with its own instructions. It compares the draft with the tool results of the run and answers `confirmed`, or `revise` with the issues to fix, for example a promised delivery date. The verdict shows in the trace as the observation of the `submit_decision` step. After one `revise` the agent gets one more attempt; a second rejected draft is escalated.
 
 The default test run never calls Foundry: it uses a scripted model and a mocked HTTP layer, so CI needs no key. To check against the real model, run the live tests (`pytest -m live --no-cov`, see above).
 

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Reflection (`agent/reflection.py`, REQUIREMENTS 8): every draft that passes the output guardrails is reviewed by a separate model call through the strict `submit_review` tool (`confirmed`, or `revise` with issues). The verdict is the observation of the `submit_decision` step, so it shows in the trace; after one `revise` the agent gets one more attempt, and a second rejected draft escalates with `AGENT_ERROR`.
+- The agent and the reviewer share the same decision and response rules (`DECISION_RULES`, `RESPONSE_RULES` in `agent/prompts.py`).
+
+### Changed
+
+- Simpler agent loop: inside a run, every escalation is raised as one internal exception and filed in one place, instead of a callable escalator class; the trace works out who decided from the stop reason, so `AgentResult.decided_by` is gone; the G8 and G9 check reads the eligibility results with a small helper.
 - Guardrails (`agent/guardrails.py`, REQUIREMENTS 9): input checks G1 to G3 before any model call (empty or too long, no employee ID, prompt-injection phrases); step checks G5 (only offered tools) and G7 (one escalation per request); output checks G8 to G10 (an approval or denial needs a matching eligibility result, an escalation needs the ticket filed in this run).
 - Escalation as the safety default: a blocked request, two invalid model replies in a row (G4), the step limit (G6), a model that cannot be reached, or a draft that fails the output checks ends in an escalation filed by the agent's own code, with a ticket and a plain-language response. Every run now ends with a decision; the trace shows whether the model or the agent decided.
 - `LLMCallError`: a failed request to Foundry (connection, timeout, rate limit, authentication, server error) names the error and its cause, never the key.

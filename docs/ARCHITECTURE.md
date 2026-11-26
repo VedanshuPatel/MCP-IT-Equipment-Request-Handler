@@ -2,11 +2,11 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 9, guardrails._
+_Last updated: Phase 10, reflection._
 
 ## Current state
 
-The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent connects to it over MCP and runs the ReAct loop with native function calling, inside guardrails:
+The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent connects to it over MCP and runs the ReAct loop with native function calling, inside guardrails, with a separate reviewer for every draft decision:
 
 ```
 scripts/run_agent.py
@@ -17,8 +17,11 @@ scripts/run_agent.py
          FoundryLLM.next_call(instructions, request, tools, history) ──► ToolCall(tool, thought, arguments)
            invalid reply: retry once (G4); twice, or model unreachable ──────► agent escalation
          ├─ submit_decision ──► SubmittedDecision ──► G8-G10 output checks
-         │                        ├─ pass ──► AgentResult(decided by the model)                end
-         │                        └─ fail ────────────────────────────────────► agent escalation
+         │                        ├─ fail ────────────────────────────────────► agent escalation
+         │                        └─ pass ──► reviewer (separate model call, submit_review)
+         │                                     ├─ confirmed ──► AgentResult(decided by the model)  end
+         │                                     └─ revise ──► Observation of the submit step;
+         │                                                   a second revise ─────────► agent escalation
          ├─ blocked by G5 or G7 ──► error Observation ──► Step
          └─ MCP tool ──► McpToolClient.call_tool ──► Observation ──► Step, added to history
        no decision after the last step (G6) ───────────────────────────────────► agent escalation
@@ -56,11 +59,12 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, replays the steps so far as function calls and results, finds the call by type and moves `thought` out of the arguments |
 | Agent: MCP client | `src/it_equipment/agent/mcp_client.py` | `McpToolClient` wraps `mcp.Client`; every tool result becomes an `Observation` (`ok`, `data`, `text`) |
 | Agent: catalog | `src/it_equipment/agent/catalog.py` | Adapts the server's tool definitions (`list_tools`) into `ToolSpec`s: the server's argument schema plus a required `thought` argument; hides `ping`; keeps the read-only hint |
-| Agent: ReAct loop | `src/it_equipment/agent/react.py` | `run_agent()`: one tool call per step until an accepted decision; runs every guardrail; files the agent's own escalations; always returns a decision |
+| Agent: ReAct loop | `src/it_equipment/agent/react.py` | `run_agent()`: one tool call per step until the reviewer confirms a decision; runs every guardrail; every escalation is raised as one internal exception and filed by `_escalate()`; always returns a decision |
 | Agent: guardrails | `src/it_equipment/agent/guardrails.py` | `check_input` (G1 to G3), `check_step` (G5, G7), `check_output` (G8 to G10): plain checks over the request and the recorded steps |
 | Agent: decision | `src/it_equipment/agent/decision.py` | `Decision` (the final record, REQUIREMENTS 6.1) and `SubmittedDecision` (what the model may submit); the `submit_decision` tool is generated from the latter |
 | Agent: trace | `src/it_equipment/agent/trace.py` | `Step` and `AgentResult`; console text (`format_step`, `format_result`) and JSON (`to_dict`) |
-| Agent: prompts | `src/it_equipment/agent/prompts.py` | The agent instructions (decision table, exceptions, response rules) and the `<request>` delimiters |
+| Agent: reflection | `src/it_equipment/agent/reflection.py` | `review_draft()`: the reviewer's separate model call with the strict `submit_review` tool; `review_observation()` turns the verdict into the observation of the `submit_decision` step |
+| Agent: prompts | `src/it_equipment/agent/prompts.py` | `AGENT_INSTRUCTIONS` and `REVIEW_INSTRUCTIONS`, built from the shared `DECISION_RULES` and `RESPONSE_RULES`; the `<request>` delimiters |
 | Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`), `agent_max_steps()` (`AGENT_MAX_STEPS`, default 8) and `load_env_file()` (`.env` never overrides real variables) |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
 | Clients | `scripts/run_agent.py`, `scripts/smoke_client.py`, `scripts/hello_client.py` | The agent on one request with a live trace; manual MCP checks: `get_employee_info` for given IDs, `ping` |
@@ -118,3 +122,5 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-031 | 2026-11-26 | The final record (`Decision`) is wider than what the model may submit (`SubmittedDecision`): only code uses the agent's codes and a missing item | The model cannot choose `AGENT_ERROR` or `GUARDRAIL_TRIGGERED`; one record type covers both kinds of decision |
 | AD-032 | 2026-11-26 | A failed request to Foundry raises `LLMCallError` (error type and cause, never the key), and the loop turns it into an `AGENT_ERROR` escalation | A network or configuration problem is reported in the trace instead of a traceback; the planned fallback model can hook in at the same place |
 | AD-033 | 2026-11-26 | The agent always sends the employee's original text as the ticket's `request` | A reviewer reads the employee's own words, never the model's paraphrase |
+| AD-034 | 2026-11-26 | Reflection is a separate model call with its own instructions and a strict `submit_review` tool; it sees only the request, the recorded tool results and the draft | An independent check that judges the draft by the tool results, not by the agent's reasoning; the strict schema makes the verdict machine-readable |
+| AD-035 | 2026-11-26 | The review is the observation of the `submit_decision` step: `confirmed` ends the run, `revise` sends the issues back through the normal loop, and a second `revise` escalates with `AGENT_ERROR` | No separate revision code path; every verdict appears in the trace and in the agent's history; the run still ends within the step limit |
