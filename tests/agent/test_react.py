@@ -1,4 +1,4 @@
-"""The ReAct loop and its guardrails with a scripted model and the real MCP server, in-process.
+"""The ReAct loop, its guardrails and reflection, with a scripted model and the real server.
 
 The scripted calls follow the demo requests in REQUIREMENTS 11, so every observation comes
 from the real tools over the MCP protocol, and every escalation files a real ticket in a
@@ -11,7 +11,9 @@ import pytest
 
 from it_equipment.agent.llm import LLMCallError, LLMError, ToolCall
 from it_equipment.agent.mcp_client import McpToolClient
+from it_equipment.agent.prompts import AGENT_INSTRUCTIONS, REVIEW_INSTRUCTIONS
 from it_equipment.agent.react import run_agent
+from it_equipment.agent.reflection import SUBMIT_REVIEW_TOOL
 from it_equipment.agent.trace import AgentResult
 from it_equipment.repositories import JsonlEscalationRepository
 from it_equipment.server import create_server
@@ -76,6 +78,23 @@ ESCALATE_E004 = ToolCall(
     },
 )
 
+#: The reviewer's verdicts (REQUIREMENTS 8). Every draft that passes the output guardrails is
+#: reviewed, so each scripted run that reaches one needs a verdict after it.
+CONFIRMED = ToolCall("submit_review", "The draft matches.", {"verdict": "confirmed", "issues": []})
+REVISE = ToolCall(
+    "submit_review",
+    "The draft promises a delivery date.",
+    {"verdict": "revise", "issues": ["'arrives on Friday': no tool returned a delivery date."]},
+)
+PROMISING_APPROVE_E002 = ToolCall(
+    "submit_decision",
+    "Eligible, so I approve.",
+    {
+        **APPROVE_E002.arguments,
+        "response": "Your laptop replacement is approved, and it arrives on Friday.",
+    },
+)
+
 AGENT_TOOLS = [
     "get_employee_info",
     "get_policy_limits",
@@ -104,27 +123,32 @@ def run_scripted(tools, scripted_llm) -> Callable[..., Awaitable]:
 
 
 async def test_approves_demo_request_1_after_checking_eligibility(run_scripted):
-    _, result = await run_scripted(REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002)
+    _, result = await run_scripted(
+        REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED
+    )
 
     assert result.stop == "decided"
     assert result.decision.decision == "approve"
     assert result.decision.reason_code == "REFRESH_DUE"
     assert result.decision_thought == APPROVE_E002.thought
-    assert [step.call for step in result.steps] == [LOOKUP_E002, CHECK_E002_LAPTOP]
+    assert [step.call for step in result.steps] == [LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002]
     assert result.steps[0].observation.data["role"] == "manager"
     assert result.steps[1].observation.data["status"] == "eligible"
+    assert result.steps[2].observation.data == {"verdict": "confirmed", "issues": []}
 
 
 async def test_each_model_call_sees_every_earlier_step_and_its_result(run_scripted):
-    llm, result = await run_scripted(REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002)
+    llm, result = await run_scripted(
+        REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED
+    )
 
-    histories = [history for _, _, _, history in llm.requests]
+    histories = [history for prompt, _, _, history in llm.requests if prompt == AGENT_INSTRUCTIONS]
     assert [len(history) for history in histories] == [0, 1, 2]
-    assert histories[2] == [(step.call, step.observation.text) for step in result.steps]
+    assert histories[2] == [(step.call, step.observation.text) for step in result.steps[:2]]
 
 
 async def test_model_is_offered_the_server_tools_submit_decision_and_the_rules(run_scripted):
-    llm, _ = await run_scripted(REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002)
+    llm, _ = await run_scripted(REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED)
 
     instructions, prompt, offered, _ = llm.requests[0]
     assert [spec.name for spec in offered] == AGENT_TOOLS
@@ -136,9 +160,11 @@ async def test_model_is_offered_the_server_tools_submit_decision_and_the_rules(r
 async def test_escalates_demo_request_3_with_the_ticket_the_server_filed(
     run_scripted, escalation_repository
 ):
-    _, result = await run_scripted(REQUEST_3, CHECK_E004_LAPTOP, FLAG_E004, ESCALATE_E004)
+    _, result = await run_scripted(
+        REQUEST_3, CHECK_E004_LAPTOP, FLAG_E004, ESCALATE_E004, CONFIRMED
+    )
 
-    check, flag = result.steps
+    check, flag, _ = result.steps
     assert check.observation.data["reason_code"] == "LIMIT_REACHED"
     assert flag.observation.data["ticket_id"] == "ESC-000001"
     assert result.decision.decision == "escalate"
@@ -149,7 +175,9 @@ async def test_escalates_demo_request_3_with_the_ticket_the_server_filed(
 async def test_tool_error_is_shown_to_the_model_and_the_run_continues(run_scripted):
     lookup_e999 = ToolCall("get_employee_info", "Look up the employee.", {"employee_id": "E999"})
 
-    llm, result = await run_scripted(REQUEST_1, lookup_e999, CHECK_E002_LAPTOP, APPROVE_E002)
+    llm, result = await run_scripted(
+        REQUEST_1, lookup_e999, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED
+    )
 
     failed = result.steps[0]
     assert failed.observation.ok is False
@@ -163,7 +191,7 @@ async def test_invalid_decision_is_shown_to_the_model_to_correct(run_scripted):
         "submit_decision", "Not sure.", {**APPROVE_E002.arguments, "decision": "maybe"}
     )
 
-    llm, result = await run_scripted(REQUEST_1, CHECK_E002_LAPTOP, unsure, APPROVE_E002)
+    llm, result = await run_scripted(REQUEST_1, CHECK_E002_LAPTOP, unsure, APPROVE_E002, CONFIRMED)
 
     rejected = result.steps[1]
     assert rejected.call == unsure
@@ -177,7 +205,7 @@ async def test_each_step_is_reported_as_soon_as_it_is_recorded(run_scripted):
     seen = []
 
     _, result = await run_scripted(
-        REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002, on_step=seen.append
+        REQUEST_1, LOOKUP_E002, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED, on_step=seen.append
     )
 
     assert seen == list(result.steps)
@@ -247,10 +275,10 @@ async def test_escalation_that_cannot_be_recorded_still_ends_the_run(
 
 async def test_g4_one_invalid_reply_is_retried(run_scripted):
     llm, result = await run_scripted(
-        REQUEST_1, LLMError("no tool call"), CHECK_E002_LAPTOP, APPROVE_E002
+        REQUEST_1, LLMError("no tool call"), CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED
     )
 
-    assert len(llm.requests) == 3
+    assert len(llm.requests) == 4
     assert (result.stop, result.decision.decision) == ("decided", "approve")
 
 
@@ -278,7 +306,7 @@ async def test_unreachable_model_escalates_instead_of_crashing(run_scripted):
 async def test_g5_tool_that_was_not_offered_never_reaches_the_server(run_scripted):
     invented = ToolCall("delete_everything", "Clean up first.", {})
 
-    _, result = await run_scripted(REQUEST_1, invented, CHECK_E002_LAPTOP, APPROVE_E002)
+    _, result = await run_scripted(REQUEST_1, invented, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED)
 
     refused = result.steps[0].observation
     assert refused.ok is False
@@ -304,7 +332,7 @@ async def test_g6_step_limit_escalates_with_agent_error(run_scripted, escalation
 
 async def test_g7_second_escalation_is_refused(run_scripted):
     _, result = await run_scripted(
-        REQUEST_3, CHECK_E004_LAPTOP, FLAG_E004, FLAG_E004, ESCALATE_E004
+        REQUEST_3, CHECK_E004_LAPTOP, FLAG_E004, FLAG_E004, ESCALATE_E004, CONFIRMED
     )
 
     second = result.steps[2].observation
@@ -320,7 +348,9 @@ async def test_ticket_always_holds_the_employees_own_words(run_scripted, escalat
         {**FLAG_E004.arguments, "request": "Laptop broken, wants a new one."},
     )
 
-    _, result = await run_scripted(REQUEST_3, CHECK_E004_LAPTOP, paraphrased, ESCALATE_E004)
+    _, result = await run_scripted(
+        REQUEST_3, CHECK_E004_LAPTOP, paraphrased, ESCALATE_E004, CONFIRMED
+    )
 
     assert result.steps[1].observation.arguments["request"] == REQUEST_3
     assert escalation_repository.find_open("E004", REQUEST_3) is not None
@@ -365,3 +395,66 @@ async def test_agent_escalation_reuses_the_ticket_the_model_filed(run_scripted):
     assert result.decision_thought.startswith("G10:")
     assert result.decision.ticket_id == "ESC-000001"
     assert result.steps[-1].observation.data["duplicate"] is True
+
+
+# --------------------------------------------------------------------- reflection
+
+
+async def test_reviewer_sees_the_request_the_tool_results_and_the_draft(run_scripted):
+    llm, result = await run_scripted(REQUEST_1, CHECK_E002_LAPTOP, APPROVE_E002, CONFIRMED)
+
+    instructions, prompt, tools, history = llm.requests[-1]
+    assert instructions == REVIEW_INSTRUCTIONS
+    assert tools == [SUBMIT_REVIEW_TOOL]
+    assert history == []
+    assert f"<request>\n{REQUEST_1}\n</request>" in prompt
+    assert result.steps[0].observation.text in prompt
+    assert APPROVE_E002.arguments["response"] in prompt
+
+
+async def test_reviewer_catches_a_promise_and_the_revised_draft_is_confirmed(run_scripted):
+    """AC-19: the first draft promises a delivery date, the second one does not."""
+    llm, result = await run_scripted(
+        REQUEST_1, CHECK_E002_LAPTOP, PROMISING_APPROVE_E002, REVISE, APPROVE_E002, CONFIRMED
+    )
+
+    check, rejected, accepted = result.steps
+    assert rejected.observation.data["verdict"] == "revise"
+    assert accepted.observation.data["verdict"] == "confirmed"
+    assert result.stop == "decided"
+    assert result.decision.response == APPROVE_E002.arguments["response"]
+    agent_requests = [r for r in llm.requests if r[0] == AGENT_INSTRUCTIONS]
+    assert agent_requests[2][3][1] == (PROMISING_APPROVE_E002, rejected.observation.text)
+    assert "'arrives on Friday'" in rejected.observation.text
+
+
+async def test_second_rejected_draft_is_escalated_with_agent_error(
+    run_scripted, escalation_repository
+):
+    """AC-19: after one revision, a draft that is still not confirmed escalates."""
+    _, result = await run_scripted(
+        REQUEST_1,
+        CHECK_E002_LAPTOP,
+        PROMISING_APPROVE_E002,
+        REVISE,
+        PROMISING_APPROVE_E002,
+        REVISE,
+    )
+
+    verdicts = [
+        step.observation.data["verdict"]
+        for step in result.steps
+        if step.call.tool == "submit_decision"
+    ]
+    assert verdicts == ["revise", "revise"]
+    assert (result.stop, result.decision.reason_code) == ("reflection", "AGENT_ERROR")
+    assert result.decision_thought == "reflection: the revised draft was not confirmed either"
+    assert escalation_repository.find_open("E002", REQUEST_1) is not None
+
+
+async def test_unreachable_reviewer_escalates_instead_of_crashing(run_scripted):
+    unreachable = LLMCallError("gpt-6-astra request failed: APIConnectionError: [Errno 8]")
+
+    _, result = await run_scripted(REQUEST_1, CHECK_E002_LAPTOP, APPROVE_E002, unreachable)
+
+    assert (result.stop, result.decision.reason_code) == ("model_error", "AGENT_ERROR")

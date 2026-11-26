@@ -5,8 +5,8 @@ Demo requests 1 to 7 from REQUIREMENTS 11. Opt-in and skipped without Foundry se
 
     pytest -m live --no-cov
 
-Each request makes several model calls. A failing assertion prints the whole trace, so you can
-see what the model thought and did.
+Each request makes several model calls, including the reviewer's. A failing assertion prints
+the whole trace, so you can see what the model thought and did.
 """
 
 import re
@@ -66,6 +66,7 @@ async def test_clear_request_is_decided_from_the_eligibility_check(
     assert (result.decision.decision, result.decision.reason_code) == (decision, reason_code), trace
     assert "check_request_eligibility" in [step.call.tool for step in result.steps], trace
     assert must_mention in result.decision.response, trace
+    assert result.steps[-1].observation.data["verdict"] == "confirmed", trace
     assert result.decision.ticket_id is None, trace
 
 
@@ -91,6 +92,7 @@ async def test_unclear_request_is_escalated_with_a_ticket(run_live, request_text
     assert re.fullmatch(r"ESC-\d{6}", ticket_id), trace
     assert result.decision.ticket_id == ticket_id, trace
     assert ticket_id in result.decision.response, trace
+    assert result.steps[-1].observation.data["verdict"] == "confirmed", trace
 
 
 async def test_every_step_carries_a_thought(run_live):

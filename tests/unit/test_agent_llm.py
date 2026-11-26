@@ -23,6 +23,7 @@ from it_equipment.agent.llm import (
     LLMCallError,
     LLMError,
     ToolCall,
+    next_call_with_retry,
 )
 from it_equipment.config import FoundrySettings
 from it_equipment.server import create_server
@@ -233,6 +234,21 @@ def test_rejected_key_raises_a_call_error(failing_llm, catalog):
 
     with pytest.raises(LLMCallError, match="gpt-6-astra request failed: AuthenticationError"):
         failing_llm(rejected).next_call("x", "y", catalog)
+
+
+def test_retry_asks_once_more_after_an_invalid_reply(scripted_llm, catalog):
+    call = ToolCall("get_employee_info", "Look up.", {"employee_id": "E002"})
+    llm = scripted_llm(LLMError("no tool call"), call)
+
+    assert next_call_with_retry(llm, "x", "y", catalog) == call
+    assert len(llm.requests) == 2
+
+
+def test_retry_gives_up_after_a_second_invalid_reply(scripted_llm, catalog):
+    llm = scripted_llm(LLMError("no tool call"), LLMError("still no tool call"))
+
+    with pytest.raises(LLMError, match="still no tool call"):
+        next_call_with_retry(llm, "x", "y", catalog)
 
 
 def test_from_settings_points_the_client_at_foundry_without_calling_it():
