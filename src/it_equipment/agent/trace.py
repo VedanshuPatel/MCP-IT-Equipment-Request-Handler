@@ -1,7 +1,9 @@
 """The ReAct trace: what the agent thought, did and saw, as console text and as JSON.
 
 Every run produces an ``AgentResult``: one ``Step`` per tool call (Thought, Action,
-Observation) and the final decision with the thought behind it (REQUIREMENTS N3).
+Observation) and the final decision with the thought behind it (REQUIREMENTS N3). When the
+agent's own code escalates (a guardrail, an invalid reply, the step limit, a model error), its
+``flag_for_human_review`` call is a step too, with a thought starting with ``(agent)``.
 """
 
 from __future__ import annotations
@@ -14,8 +16,16 @@ from it_equipment.agent.decision import Decision
 from it_equipment.agent.llm import ToolCall
 from it_equipment.agent.mcp_client import Observation
 
-#: Why a run ended: the model submitted a decision, or it ran out of steps.
-StopReason = Literal["decided", "step_limit"]
+#: Why a run ended: the model's decision passed the output guardrails, or the agent escalated
+#: because of the named problem.
+StopReason = Literal[
+    "decided",
+    "input_guardrail",
+    "output_guardrail",
+    "invalid_output",
+    "model_error",
+    "step_limit",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,15 +62,17 @@ class AgentResult:
         request: The employee's request.
         steps: Every tool step, in order.
         stop: Why the run ended.
-        decision: The submitted decision, or None if the run ended without one.
-        decision_thought: The model's thought when it submitted the decision.
+        decision: The final decision; every run ends with one.
+        decision_thought: Why: the model's thought, or the agent's reason for escalating.
+        decided_by: ``model`` for a submitted decision, ``agent`` when code escalated.
     """
 
     request: str
     steps: tuple[Step, ...]
     stop: StopReason
-    decision: Decision | None = None
+    decision: Decision
     decision_thought: str = ""
+    decided_by: Literal["model", "agent"] = "model"
 
     def to_dict(self) -> dict[str, Any]:
         """The whole trace as JSON-ready data, for saving runs."""
@@ -68,8 +80,9 @@ class AgentResult:
             "request": self.request,
             "steps": [step.to_dict() for step in self.steps],
             "stop": self.stop,
+            "decided_by": self.decided_by,
             "decision_thought": self.decision_thought,
-            "decision": self.decision.model_dump() if self.decision else None,
+            "decision": self.decision.model_dump(),
         }
 
 
@@ -90,15 +103,14 @@ def format_step(step: Step) -> str:
 
 
 def format_result(result: AgentResult) -> str:
-    """Render the end of a run: the final thought and decision, or why there is none."""
-    if result.decision is None:
-        return f"No decision: the run stopped ({result.stop}) after {len(result.steps)} steps."
+    """Render the end of a run: who decided, why, the decision and the response."""
     decision = result.decision
+    decided_by = "model" if result.decided_by == "model" else f"agent ({result.stop})"
     lines = [
         "Final",
         f"  Thought: {result.decision_thought}",
-        f"  Decision: {decision.decision} ({decision.reason_code})",
-        f"  Employee: {decision.employee_id}, item: {decision.item}",
+        f"  Decision: {decision.decision} ({decision.reason_code}), decided by the {decided_by}",
+        f"  Employee: {decision.employee_id}, item: {decision.item or 'unknown'}",
     ]
     if decision.ticket_id:
         lines.append(f"  Ticket: {decision.ticket_id}")
