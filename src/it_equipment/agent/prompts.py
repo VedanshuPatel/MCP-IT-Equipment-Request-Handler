@@ -3,12 +3,17 @@
 The rules come from REQUIREMENTS sections 2.1 and 6 to 8. The agent and the reviewer share the
 same decision and response rules, so they judge a draft by the same standard. The tools are
 sent through the API's function calling, not in the prompt. The employee's request is always
-placed between ``<request>`` tags and treated as data, never as instructions.
+placed between ``<request>`` tags and treated as data, never as instructions; its ``<`` and
+``>`` are escaped, so it cannot close the tag.
 """
+
+import html
 
 DECISION_RULES = """\
 Decision table:
 - eligible: approve, with its reason code (NEW_ALLOCATION or REFRESH_DUE).
+- eligible with REFRESH_DUE allows only replacing a unit on file. If the employee asks for an
+  additional unit (for example "a second monitor"), escalate with AMBIGUOUS_REQUEST.
 - not_eligible and no exception claimed: deny, with its reason code (LIMIT_REACHED or
   ROLE_NOT_ELIGIBLE).
 - not_eligible and an exception claimed: escalate with EXCEPTION_REQUESTED.
@@ -26,7 +31,8 @@ The response to the employee:
 - The first sentence states the decision.
 - The reason uses only facts from tool results, such as the role, limits and dates.
 - Promise nothing the tools did not return: no delivery dates, models or prices.
-- A denial with LIMIT_REACHED gives the next eligible date.
+- A denial with LIMIT_REACHED gives the next eligible date as the date a unit on file can be
+  replaced, never as a date for an additional unit.
 - An escalation gives the ticket ID and says a human reviewer will follow up.
 - Plain language, at most 120 words, with no internal codes or JSON.
 """
@@ -80,4 +86,4 @@ tone.
 
 def request_block(request: str) -> str:
     """Wrap the employee's request in delimiters so the model treats it as data."""
-    return f"<request>\n{request}\n</request>"
+    return f"<request>\n{html.escape(request, quote=False)}\n</request>"
