@@ -2,19 +2,21 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 7, agent foundation._
+_Last updated: Phase 8, ReAct agent._
 
 ## Current state
 
-The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent's foundation connects to it over MCP and lets the model make one tool call through native function calling:
+The MCP server is complete: four tools (`get_employee_info`, `get_policy_limits`, `check_request_eligibility`, `flag_for_human_review`) plus `ping`. The agent connects to it over MCP and runs the ReAct loop with native function calling:
 
 ```
-scripts/one_call_demo.py
-  └─ first_call.run_one_tool_call
-       ├─ McpToolClient.list_tools ──► catalog: one ToolSpec per tool, with a required "thought" argument
-       ├─ FoundryLLM.next_call     ──► Foundry Responses API: strict function tools, exactly one call
-       │                               → ToolCall(tool, thought, arguments)
-       └─ McpToolClient.call_tool  ──► MCP server (arguments without "thought") ──► Observation
+scripts/run_agent.py
+  └─ react.run_agent(llm, mcp, request)
+       tools = McpToolClient.list_tools() + submit_decision      (each with a required "thought")
+       repeat, at most 8 times:
+         FoundryLLM.next_call(instructions, request, tools, history) ──► ToolCall(tool, thought, arguments)
+         ├─ submit_decision ──► Decision (validated) ──► AgentResult(steps, decision)   end
+         └─ MCP tool        ──► McpToolClient.call_tool ──► Observation ──► Step, added to history
+       no decision after 8 steps ──► AgentResult(steps, stop="step_limit")
 ```
 
 Server layers, each depending only on the one below it:
@@ -43,13 +45,16 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Rules | `src/it_equipment/rules.py` | One class per eligibility rule (E1 to E6), `DEFAULT_RULES` in order, `evaluate()` (first decision wins), `add_years()` |
 | Tools | `src/it_equipment/tools.py` | `EquipmentTools`: the four tool methods, with injected repositories, date clock and UTC clock; no MCP code |
 | MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers with tool annotations (three read-only, one idempotent write); `main()` serves Streamable HTTP |
-| Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, finds the call by type and moves `thought` out of the arguments |
+| Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, replays the steps so far as function calls and results, finds the call by type and moves `thought` out of the arguments |
 | Agent: MCP client | `src/it_equipment/agent/mcp_client.py` | `McpToolClient` wraps `mcp.Client`; every tool result becomes an `Observation` (`ok`, `data`, `text`) |
 | Agent: catalog | `src/it_equipment/agent/catalog.py` | Adapts the server's tool definitions (`list_tools`) into `ToolSpec`s: the server's argument schema plus a required `thought` argument; hides `ping`; keeps the read-only hint |
-| Agent: first call | `src/it_equipment/agent/first_call.py`, `prompts.py` | SCOPE step 5: the model picks one tool and the agent calls it over MCP; the request is wrapped in `<request>` tags |
+| Agent: ReAct loop | `src/it_equipment/agent/react.py` | `run_agent()`: one tool call per step until `submit_decision` or the step limit; tool errors and invalid decisions become observations |
+| Agent: decision | `src/it_equipment/agent/decision.py` | `Decision` (REQUIREMENTS 6.1) and the agent-local `submit_decision` tool generated from it |
+| Agent: trace | `src/it_equipment/agent/trace.py` | `Step` and `AgentResult`; console text (`format_step`, `format_result`) and JSON (`to_dict`) |
+| Agent: prompts | `src/it_equipment/agent/prompts.py` | The agent instructions (decision table, exceptions, response rules) and the `<request>` delimiters |
 | Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`) and `load_env_file()` (`.env` never overrides real variables) |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
-| Clients | `scripts/smoke_client.py`, `scripts/hello_client.py` | Manual checks: `get_employee_info` for given IDs; `ping` |
+| Clients | `scripts/run_agent.py`, `scripts/smoke_client.py`, `scripts/hello_client.py` | The agent on one request with a live trace; manual MCP checks: `get_employee_info` for given IDs, `ping` |
 | Unit tests | `tests/unit/` | Tools, repositories, rules, settings, server and agent parts; no network, today fixed to 2026-11-24 |
 | Agent tests | `tests/agent/` | The agent with a scripted model (`ScriptedLLM` in `conftest.py`) and the real server in-process |
 | Integration tests | `tests/integration/` | In-process MCP client tests, and end-to-end tests against the real server process |
@@ -96,3 +101,6 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-023 | 2026-11-24 | Native function calling: each MCP tool is offered as a strict function with an added required `thought` argument, and every reply must be exactly one tool call | The API enforces the argument schema, so there is no free text to parse; the required `thought` gives every ReAct step a visible Thought, which a reasoning model would otherwise keep hidden; one call per reply keeps one Thought, Action and Observation per step. Tools with optional arguments are sent without strict mode, which requires every argument |
 | AD-024 | 2026-11-24 | `FoundryLLM` finds the tool call by type, and uses a 60 s timeout, a 4,096-token reply budget and `store=False` | Reasoning models put a reasoning item first; the SDK's 10-minute default would hang the agent; reasoning tokens count toward the budget; requests are not stored by the service |
 | AD-025 | 2026-11-25 | Live end-to-end tests against Foundry are opt-in: marker `live`, deselected by default, skipped without settings; settings are read from the environment, then `.env`, without changing the process environment | CI stays free of secrets and cost; the model is not deterministic, so the assertions accept any sensible step; a passing run proves Foundry accepts the strict tool schemas |
+| AD-026 | 2026-11-25 | The ReAct loop makes exactly one tool call per step; MCP tool errors and invalid `submit_decision` arguments go back to the model as observations; the run ends at `submit_decision` or after 8 steps without a decision | One Thought, Action and Observation per step keeps the trace readable; the model can correct itself; the loop always terminates. Turning a run without a decision into an escalation is a guardrail (next phase) |
+| AD-027 | 2026-11-25 | Every request to the model replays the steps so far as function calls (with their `thought`) and their results; hidden reasoning items are not replayed | `store=False` keeps nothing on the service; the explicit thoughts carry the reasoning from step to step; the history stays provider-neutral, so a local model can use it too |
+| AD-028 | 2026-11-25 | `submit_decision` is an agent-local strict tool generated from the `Decision` Pydantic model; it offers only the reason codes the model may give | One source for the schema and the validation; the codes for missing IDs, guardrails and agent errors are filed by code, never chosen by the model |

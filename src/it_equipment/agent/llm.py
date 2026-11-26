@@ -1,9 +1,10 @@
 """Language-model clients (Strategy pattern).
 
-The agent talks to any model through ``LLMClient``: instructions, a prompt and the tools in,
-exactly one ``ToolCall`` out. Every turn ends in a tool call, so there is no free text to
-parse. ``FoundryLLM`` implements it with native function calling on the Microsoft Foundry
-Responses API. A local fallback model plugs in later as another implementation.
+The agent talks to any model through ``LLMClient``: instructions, the request, the tools and
+the steps so far in, exactly one ``ToolCall`` out. Every turn ends in a tool call, so there is
+no free text to parse. ``FoundryLLM`` implements it with native function calling on the
+Microsoft Foundry Responses API. A local fallback model plugs in later as another
+implementation.
 """
 
 from __future__ import annotations
@@ -44,6 +45,10 @@ class ToolCall:
     arguments: dict[str, Any]
 
 
+#: The steps so far: each tool call the model made and the text its tool returned.
+History = Sequence[tuple[ToolCall, str]]
+
+
 class LLMClient(Protocol):
     """Anything that picks the next tool call for the agent."""
 
@@ -52,13 +57,16 @@ class LLMClient(Protocol):
         """The model or deployment name, for traces."""
         ...
 
-    def next_call(self, instructions: str, prompt: str, tools: Sequence[ToolSpec]) -> ToolCall:
-        """Return the tool call the model chooses.
+    def next_call(
+        self, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History = ()
+    ) -> ToolCall:
+        """Return the tool call the model chooses next.
 
         Args:
             instructions: System instructions (the rules).
-            prompt: The user turn (the request and what the agent has seen so far).
+            prompt: The user turn: the delimited request.
             tools: The tools the model may call.
+            history: The calls made so far in this run, each with the text its tool returned.
         """
         ...
 
@@ -103,17 +111,24 @@ class FoundryLLM:
         """The Foundry deployment name."""
         return self._deployment
 
-    def next_call(self, instructions: str, prompt: str, tools: Sequence[ToolSpec]) -> ToolCall:
+    def next_call(
+        self, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History = ()
+    ) -> ToolCall:
         """Send one request and return the single tool call in the reply.
 
         ``tool_choice="required"`` makes the model call a tool and ``parallel_tool_calls=False``
         limits it to one, so every reply is exactly one ReAct step. Reasoning models put a
         reasoning item before the call, so the call is found by its type, not its position.
 
+        The history is sent again on every request (``store=False`` keeps nothing on the
+        service). Each earlier call goes back with its ``thought``, so the model sees its own
+        reasoning from the previous steps.
+
         Args:
             instructions: System instructions.
             prompt: The user turn.
             tools: The tools the model may call.
+            history: The calls made so far, each with the text its tool returned.
 
         Returns:
             The call, with the ``thought`` argument moved into ``ToolCall.thought``.
@@ -126,7 +141,7 @@ class FoundryLLM:
         response = self._client.responses.create(
             model=self._deployment,
             instructions=instructions,
-            input=prompt,
+            input=_input_items(prompt, history),
             tools=[_function_tool(spec) for spec in tools],
             tool_choice="required",
             parallel_tool_calls=False,
@@ -156,6 +171,22 @@ def _function_tool(spec: ToolSpec) -> dict[str, Any]:
         "parameters": parameters,
         "strict": set(parameters["required"]) == set(parameters["properties"]),
     }
+
+
+def _input_items(prompt: str, history: History) -> list[dict[str, Any]]:
+    """The conversation in the Responses API format: the request, then each call and result.
+
+    Calls are numbered here (``call_1``, ...) only to pair each result with its call.
+    """
+    items: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    for number, (call, output) in enumerate(history, start=1):
+        call_id = f"call_{number}"
+        arguments = json.dumps({THOUGHT: call.thought, **call.arguments})
+        items.append(
+            {"type": "function_call", "call_id": call_id, "name": call.tool, "arguments": arguments}
+        )
+        items.append({"type": "function_call_output", "call_id": call_id, "output": output})
+    return items
 
 
 def _to_tool_call(name: str, raw_arguments: str) -> ToolCall:

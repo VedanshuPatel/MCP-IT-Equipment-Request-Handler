@@ -100,12 +100,36 @@ def test_posts_one_request_that_requires_exactly_one_tool_call(foundry_llm, http
     assert {key: value for key, value in body.items() if key != "tools"} == {
         "model": "gpt-6-astra",
         "instructions": "be helpful",
-        "input": "<request>hi</request>",
+        "input": [{"role": "user", "content": "<request>hi</request>"}],
         "tool_choice": "required",
         "parallel_tool_calls": False,
         "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
         "store": False,
     }
+
+
+def test_replays_each_earlier_call_with_its_thought_and_result(foundry_llm, http_requests, catalog):
+    """Nothing is stored on the service, so every request carries the whole run so far."""
+    earlier = ToolCall(
+        tool="get_employee_info",
+        thought="I need the role first.",
+        arguments={"employee_id": "E002"},
+    )
+
+    foundry_llm(LOOKUP_E002).next_call(
+        "x", "<request>hi</request>", catalog, [(earlier, '{"role": "manager"}')]
+    )
+
+    assert json.loads(http_requests[0].content)["input"] == [
+        {"role": "user", "content": "<request>hi</request>"},
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "get_employee_info",
+            "arguments": '{"thought": "I need the role first.", "employee_id": "E002"}',
+        },
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"role": "manager"}'},
+    ]
 
 
 def test_offers_every_catalog_tool_as_a_strict_function(foundry_llm, http_requests, catalog):

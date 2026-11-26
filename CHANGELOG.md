@@ -8,8 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- Agent foundation (SCOPE step 5): one model-chosen tool call for a hard-coded request (`agent/first_call.py`; `scripts/one_call_demo.py` prints the Thought, the Action and the Observation).
-- `FoundryLLM` behind an `LLMClient` protocol: Microsoft Foundry through the OpenAI Responses API with native function calling. Every request requires exactly one tool call (`tool_choice="required"`, no parallel calls) and returns a `ToolCall` (tool, thought, arguments).
+- ReAct agent (`agent/react.py`): each step the model sees the request, the tools and every earlier step, and makes one tool call; tool errors and invalid decisions are shown to it as observations; the run ends with `submit_decision` or at the step limit (8).
+- `submit_decision`: an agent-local strict tool generated from the `Decision` model (REQUIREMENTS 6.1), with enums for the decision and the reason codes the model may give.
+- ReAct trace (`agent/trace.py`): Thought, Action and Observation per step plus the final decision, as console text and as JSON.
+- Agent instructions with the decision table, exceptions and response rules (REQUIREMENTS 6 and 7).
+- `scripts/run_agent.py`: runs the agent on a request against Foundry and prints the trace live.
+- Live tests for demo requests 1 to 5: expected decision and reason code, the date in the denial, one ticket per escalation, a thought on every step.
+- `FoundryLLM` behind an `LLMClient` protocol: Microsoft Foundry through the OpenAI Responses API with native function calling. Every request requires exactly one tool call (`tool_choice="required"`, no parallel calls) and returns a `ToolCall` (tool, thought, arguments); the steps so far are sent back with every request.
 - Tool catalog built from the server's `list_tools`: each tool is offered as a strict function whose schema has an extra required `thought` argument, so every call carries the model's reason (the ReAct Thought); `ping` is hidden.
 - `McpToolClient`: MCP client that turns every tool result, success or error, into an `Observation`.
 - Settings for the agent: `FoundrySettings` (`FOUNDRY_ENDPOINT`, `FOUNDRY_API_KEY`, `FOUNDRY_DEPLOYMENT`; the key never appears in `repr` or error messages) and `.env` loading with `python-dotenv`.
