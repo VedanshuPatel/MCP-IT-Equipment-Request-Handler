@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Scripted agent tests for demo requests 2, 4 and 5, and for request 8 (E001 asks for a second monitor); a test that the two mock-data files agree on roles and items.
+- A live test for request 9: a replacement that is due ("my monitor is getting old, can I get a new one?") is still approved.
 - Model fallback (REQUIREMENTS N5): when Foundry is unreachable, times out, is rate-limited or returns a server error, `FallbackLLM` switches to `ChatCompletionsLLM`, a keyless client for a hosted model: by default `Qwen3.5-397B-A17B` on OVHcloud AI Endpoints in anonymous mode. No API key, no download and no new dependency; requests carry no `Authorization` header, and rate limits are waited out. The optional `FALLBACK_ENDPOINT`, `FALLBACK_MODEL` and `FALLBACK_MAX_RETRIES` (default 8) choose another keyless model and how long rate limits are waited out; no secret is ever asked for. Configuration errors, such as a wrong Foundry key, are still reported. The `llm.generate` span records which model answered and an `llm.fallback` event marks the switch.
 - `LLMCallError.outage` tells outages from configuration errors.
 - Optional `FOUNDRY_MAX_RETRIES` (default 2, so an outage switches to the fallback within seconds); `AGENT_MAX_STEPS`, `FOUNDRY_MAX_RETRIES` and `FALLBACK_MAX_RETRIES` share one parser, and a blank value keeps the default.
@@ -78,6 +79,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The output guardrails checked only the eligibility status. G8 and G9 now also require the same reason code as the eligibility result; G10 requires an escalation code, and once a ticket is filed the run can only end as that escalation (approvals and denials carry no ticket); the new G11 blocks a decision for anyone other than the employee who sent the request.
 - A draft blocked by an output guardrail could put the model's text into the `agent.step` span as an exception event; step spans no longer record exceptions (REQUIREMENTS N4).
 - The reviewer saw earlier drafts and their verdicts; it now sees only the tool results.
+- After the model filed a ticket, the reviewer could still ask for a deny, which G10 then blocked. The rules the agent and the reviewer share now say that a filed ticket cannot be withdrawn, so the decision stays an escalation.
 - A model call without a `thought` was accepted; it is now an invalid reply and is retried (G4). A reviewer reply that is not a valid review is retried once too, instead of escalating at once.
 - `<` and `>` in a request are escaped, so the request cannot close its `<request>` tag.
 - Two identical escalations arriving at the same moment could create two tickets; the store now looks for an open ticket and appends a new one under one lock (`find_or_create`).

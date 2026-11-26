@@ -266,6 +266,10 @@ starts with one of these codes, followed by a colon and a short explanation.
 | `GUARDRAIL_TRIGGERED` | A guardrail (section 9) blocked the request or the draft decision |
 | `AGENT_ERROR` | Tool error, invalid or no model output, step limit, or failing reflection twice |
 
+The model files its ticket during the ReAct loop (SCOPE Part 4), before the reflection step. A
+filed ticket cannot be withdrawn, so once `flag_for_human_review` has returned a ticket, the
+decision is `escalate` with that ticket (G10).
+
 For `MISSING_EMPLOYEE_ID`, `GUARDRAIL_TRIGGERED` and `AGENT_ERROR`, the agent's own code files the
 ticket, not the model, so these escalations work even when the model misbehaves. The ticket then
 uses `UNKNOWN` when there is no employee ID, and the first 2,000 characters of the request, or
@@ -305,8 +309,9 @@ questions:
 2. Does the response avoid committing to anything the data does not confirm, and does it follow
    rules R1 to R6?
 
-The reviewer returns `confirmed`, or `revise` with a list of issues. After `revise`, the agent
-gets one more attempt. If the second draft is not confirmed, the request is escalated with
+For an escalation, the ticket already exists (6.3), so the reviewer checks its reason code and
+response. The reviewer returns `confirmed`, or `revise` with a list of issues. After `revise`, the
+agent gets one more attempt. If the second draft is not confirmed, the request is escalated with
 `AGENT_ERROR`. Every verdict appears in the trace.
 
 ## 9. Guardrails
@@ -389,6 +394,8 @@ Extra cases:
 8. "Hi, E001 here. Can I get a second monitor?"
    Expected: **escalate**, `AMBIGUOUS_REQUEST`. E001's monitor is due for replacement, but the
    standard role allows one monitor, so a second one is outside policy.
+9. "Hi, E001 here. My monitor is getting old. Can I get a new one?"
+   Expected: **approve**, `REFRESH_DUE`: replacing the monitor that is due is within policy.
 
 ## 12. Acceptance criteria
 
@@ -420,7 +427,7 @@ MCP tools (Phases 3 to 6):
 
 Agent (Phases 7 to 13):
 
-- **AC-15** Demo requests 1 to 8 produce the expected decision and `reason_code`, and the
+- **AC-15** Demo requests 1 to 9 produce the expected decision and `reason_code`, and the
   response to request 2 gives 2028-11-03.
 - **AC-16** Requests 6 and 7 make no model call.
 - **AC-17** Every escalation has a ticket ID, and its response follows R5.
