@@ -201,7 +201,7 @@ async def test_blocked_request_is_escalated_without_calling_the_model(
     llm, result = await run_scripted(request_text)
 
     assert llm.requests == []
-    assert (result.stop, result.decided_by) == ("input_guardrail", "agent")
+    assert result.stop == "input_guardrail"
     assert (result.decision.decision, result.decision.reason_code) == ("escalate", code)
     assert result.decision.employee_id == employee_id
     assert result.decision.ticket_id == "ESC-000001"
@@ -251,7 +251,7 @@ async def test_g4_one_invalid_reply_is_retried(run_scripted):
     )
 
     assert len(llm.requests) == 3
-    assert (result.decided_by, result.decision.decision) == ("model", "approve")
+    assert (result.stop, result.decision.decision) == ("decided", "approve")
 
 
 async def test_g4_two_invalid_replies_in_a_row_escalate(run_scripted):
@@ -294,7 +294,7 @@ async def test_g6_step_limit_escalates_with_agent_error(run_scripted, escalation
         REQUEST_1, LOOKUP_E002, LOOKUP_E002, LOOKUP_E002, max_steps=3, on_step=seen.append
     )
 
-    assert (result.stop, result.decided_by) == ("step_limit", "agent")
+    assert result.stop == "step_limit"
     assert (result.decision.decision, result.decision.reason_code) == ("escalate", "AGENT_ERROR")
     assert [step.number for step in result.steps] == [1, 2, 3, 4]
     assert result.steps[3].call.thought == "(agent) G6: no decision in 3 steps"
@@ -310,7 +310,7 @@ async def test_g7_second_escalation_is_refused(run_scripted):
     second = result.steps[2].observation
     assert second.ok is False
     assert second.text.startswith("G7: this request is already escalated as ESC-000001.")
-    assert (result.decided_by, result.decision.ticket_id) == ("model", "ESC-000001")
+    assert (result.stop, result.decision.ticket_id) == ("decided", "ESC-000001")
 
 
 async def test_ticket_always_holds_the_employees_own_words(run_scripted, escalation_repository):
@@ -334,7 +334,7 @@ async def test_g8_approval_without_an_eligibility_check_is_escalated(run_scripte
     """AC-20: the model approves after only looking the employee up."""
     _, result = await run_scripted(REQUEST_1, LOOKUP_E002, APPROVE_E002)
 
-    assert (result.stop, result.decided_by) == ("output_guardrail", "agent")
+    assert result.stop == "output_guardrail"
     assert (result.decision.decision, result.decision.reason_code) == (
         "escalate",
         "GUARDRAIL_TRIGGERED",
@@ -351,7 +351,7 @@ async def test_g10_escalation_without_a_ticket_is_filed_by_the_agent(run_scripte
     _, result = await run_scripted(REQUEST_3, CHECK_E004_LAPTOP, unfiled)
 
     assert result.decision_thought.startswith("G10:")
-    assert (result.decided_by, result.decision.ticket_id) == ("agent", "ESC-000001")
+    assert (result.stop, result.decision.ticket_id) == ("output_guardrail", "ESC-000001")
 
 
 async def test_agent_escalation_reuses_the_ticket_the_model_filed(run_scripted):

@@ -62,7 +62,7 @@ async def test_clear_request_is_decided_from_the_eligibility_check(
 ):
     result, trace = await run_live(request_text)
 
-    assert (result.stop, result.decided_by) == ("decided", "model"), trace
+    assert result.stop == "decided", trace
     assert (result.decision.decision, result.decision.reason_code) == (decision, reason_code), trace
     assert "check_request_eligibility" in [step.call.tool for step in result.steps], trace
     assert must_mention in result.decision.response, trace
@@ -80,7 +80,7 @@ async def test_clear_request_is_decided_from_the_eligibility_check(
 async def test_unclear_request_is_escalated_with_a_ticket(run_live, request_text, reason_code):
     result, trace = await run_live(request_text)
 
-    assert (result.stop, result.decided_by) == ("decided", "model"), trace
+    assert result.stop == "decided", trace
     assert (result.decision.decision, result.decision.reason_code) == (
         "escalate",
         reason_code,
@@ -112,7 +112,7 @@ async def test_blocked_request_is_escalated_by_the_agent(run_live, request_text,
     """Input guardrails run before the model, so only the agent's ticket is in the trace."""
     result, trace = await run_live(request_text)
 
-    assert (result.stop, result.decided_by) == ("input_guardrail", "agent"), trace
+    assert result.stop == "input_guardrail", trace
     assert (result.decision.decision, result.decision.reason_code) == (
         "escalate",
         reason_code,

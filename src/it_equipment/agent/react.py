@@ -14,6 +14,7 @@ draft the output checks reject all end in an escalation that the agent's own cod
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from pydantic import ValidationError
 
@@ -49,6 +50,17 @@ _WHY = {
     "AGENT_ERROR": "because the automatic review could not be completed",
 }
 
+OnStep = Callable[[Step], None] | None
+
+
+@dataclass
+class _Escalation(Exception):
+    """Raised inside a run to end it with an escalation filed by the agent's own code."""
+
+    stop: StopReason
+    code: AgentReasonCode
+    reason: str
+
 
 async def run_agent(
     llm: LLMClient,
@@ -56,7 +68,7 @@ async def run_agent(
     request: str,
     *,
     max_steps: int = DEFAULT_AGENT_MAX_STEPS,
-    on_step: Callable[[Step], None] | None = None,
+    on_step: OnStep = None,
 ) -> AgentResult:
     """Handle one request with the ReAct loop and its guardrails.
 
@@ -70,49 +82,57 @@ async def run_agent(
     Returns:
         The trace and the final decision: the model's, or the agent's escalation.
     """
-    escalate = _Escalator(mcp, request, on_step)
-    violation = check_input(request)
-    if violation:
-        return await escalate([], "input_guardrail", violation.code, str(violation))
+    steps: list[Step] = []
+    try:
+        if violation := check_input(request):
+            raise _Escalation("input_guardrail", violation.code, str(violation))
+        return await _react_loop(llm, mcp, request, steps, max_steps, on_step)
+    except _Escalation as raised:
+        escalation = raised
+    except LLMError as error:
+        reason = f"G4: two invalid model replies in a row ({error})"
+        escalation = _Escalation("invalid_output", "AGENT_ERROR", reason)
+    except LLMCallError as error:
+        escalation = _Escalation("model_error", "AGENT_ERROR", f"model unavailable: {error}")
+    return await _escalate(mcp, request, steps, on_step, escalation)
 
+
+async def _react_loop(
+    llm: LLMClient,
+    mcp: McpToolClient,
+    request: str,
+    steps: list[Step],
+    max_steps: int,
+    on_step: OnStep,
+) -> AgentResult:
+    """Run Thought, Action, Observation steps until the model's decision passes the checks.
+
+    Raises:
+        _Escalation: When an output guardrail or the step limit (G6) ends the run.
+        LLMError: After two invalid model replies in a row (G4).
+        LLMCallError: When the model cannot be reached.
+    """
     tools = [*await mcp.list_tools(), SUBMIT_DECISION_TOOL]
     allowed = [spec.name for spec in tools]
     prompt = request_block(request)
-    steps: list[Step] = []
     for number in range(1, max_steps + 1):
         history = [(step.call, step.observation.text) for step in steps]
-        try:
-            call = _next_call(llm, prompt, tools, history)
-        except LLMError as error:
-            reason = f"G4: two invalid model replies in a row ({error})"
-            return await escalate(steps, "invalid_output", "AGENT_ERROR", reason)
-        except LLMCallError as error:
-            return await escalate(
-                steps, "model_error", "AGENT_ERROR", f"model unavailable: {error}"
-            )
-
+        call = _next_call(llm, prompt, tools, history)
         if call.tool == SUBMIT_DECISION:
             try:
                 draft = SubmittedDecision.model_validate(call.arguments)
             except ValidationError as error:
                 observation = _rejected(call, error)
             else:
-                violation = check_output(draft, steps)
-                if violation:
-                    reason = str(violation)
-                    return await escalate(steps, "output_guardrail", violation.code, reason)
+                if violation := check_output(draft, steps):
+                    raise _Escalation("output_guardrail", violation.code, str(violation))
                 return AgentResult(request, tuple(steps), "decided", draft, call.thought)
         elif problem := check_step(call, allowed, steps):
             observation = Observation(call.tool, call.arguments, ok=False, data=None, text=problem)
         else:
             observation = await mcp.call_tool(call.tool, _arguments_to_send(call, request))
-        steps.append(Step(number, call, observation))
-        if on_step is not None:
-            on_step(steps[-1])
-
-    return await escalate(
-        steps, "step_limit", "AGENT_ERROR", f"G6: no decision in {max_steps} steps"
-    )
+        _record(steps, Step(number, call, observation), on_step)
+    raise _Escalation("step_limit", "AGENT_ERROR", f"G6: no decision in {max_steps} steps")
 
 
 def _next_call(
@@ -143,49 +163,45 @@ def _rejected(call: ToolCall, error: ValidationError) -> Observation:
     )
 
 
-class _Escalator:
-    """Files an escalation from the agent's own code and builds the final result.
+def _record(steps: list[Step], step: Step, on_step: OnStep) -> None:
+    """Add a step to the run and report it to the live trace."""
+    steps.append(step)
+    if on_step is not None:
+        on_step(step)
 
-    Used when the model cannot be trusted to escalate: the request was blocked, the model
-    misbehaved or could not be reached, or its draft failed the output guardrails. If this run
-    already filed a ticket for the same request, the store's duplicate guard returns it.
+
+async def _escalate(
+    mcp: McpToolClient,
+    request: str,
+    steps: list[Step],
+    on_step: OnStep,
+    escalation: _Escalation,
+) -> AgentResult:
+    """File a ticket from the agent's own code, record it as a step and return the escalation.
+
+    If this run already filed a ticket for the same request, the store's duplicate guard
+    returns that ticket.
     """
-
-    def __init__(
-        self, mcp: McpToolClient, request: str, on_step: Callable[[Step], None] | None
-    ) -> None:
-        """Remember the connection, the request and the trace callback."""
-        self._mcp = mcp
-        self._request = request
-        self._on_step = on_step
-
-    async def __call__(
-        self, steps: list[Step], stop: StopReason, code: AgentReasonCode, reason: str
-    ) -> AgentResult:
-        """File the ticket, record the call as a step and return the escalation."""
-        employee_id = employee_id_in(self._request)
-        arguments = {
-            "employee_id": employee_id,
-            "request": self._request[:MAX_REQUEST_LENGTH] if self._request.strip() else "(empty)",
-            "reason": f"{code}: {reason}"[:MAX_REASON_LENGTH],
-        }
-        observation = await self._mcp.call_tool(FLAG_FOR_HUMAN_REVIEW, arguments)
-        call = ToolCall(FLAG_FOR_HUMAN_REVIEW, f"(agent) {reason}", arguments)
-        step = Step(len(steps) + 1, call, observation)
-        if self._on_step is not None:
-            self._on_step(step)
-        ticket_id = (observation.data or {}).get("ticket_id") if observation.ok else None
-        decision = Decision(
-            employee_id=employee_id,
-            item=None,
-            decision="escalate",
-            reason_code=code,
-            response=_escalation_response(code, ticket_id),
-            ticket_id=ticket_id,
-        )
-        return AgentResult(
-            self._request, (*steps, step), stop, decision, reason, decided_by="agent"
-        )
+    code, reason = escalation.code, escalation.reason
+    employee_id = employee_id_in(request)
+    arguments = {
+        "employee_id": employee_id,
+        "request": request[:MAX_REQUEST_LENGTH] if request.strip() else "(empty)",
+        "reason": f"{code}: {reason}"[:MAX_REASON_LENGTH],
+    }
+    observation = await mcp.call_tool(FLAG_FOR_HUMAN_REVIEW, arguments)
+    call = ToolCall(FLAG_FOR_HUMAN_REVIEW, f"(agent) {reason}", arguments)
+    _record(steps, Step(len(steps) + 1, call, observation), on_step)
+    ticket_id = (observation.data or {}).get("ticket_id") if observation.ok else None
+    decision = Decision(
+        employee_id=employee_id,
+        item=None,
+        decision="escalate",
+        reason_code=code,
+        response=_escalation_response(code, ticket_id),
+        ticket_id=ticket_id,
+    )
+    return AgentResult(request, tuple(steps), escalation.stop, decision, reason)
 
 
 def _escalation_response(code: AgentReasonCode, ticket_id: str | None) -> str:

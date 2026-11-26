@@ -16,8 +16,8 @@ from it_equipment.agent.decision import Decision
 from it_equipment.agent.llm import ToolCall
 from it_equipment.agent.mcp_client import Observation
 
-#: Why a run ended: the model's decision passed the output guardrails, or the agent escalated
-#: because of the named problem.
+#: Why a run ended: ``decided`` when the model's decision passed every check (the model
+#: decided); anything else names the problem that made the agent escalate.
 StopReason = Literal[
     "decided",
     "input_guardrail",
@@ -64,7 +64,6 @@ class AgentResult:
         stop: Why the run ended.
         decision: The final decision; every run ends with one.
         decision_thought: Why: the model's thought, or the agent's reason for escalating.
-        decided_by: ``model`` for a submitted decision, ``agent`` when code escalated.
     """
 
     request: str
@@ -72,7 +71,6 @@ class AgentResult:
     stop: StopReason
     decision: Decision
     decision_thought: str = ""
-    decided_by: Literal["model", "agent"] = "model"
 
     def to_dict(self) -> dict[str, Any]:
         """The whole trace as JSON-ready data, for saving runs."""
@@ -80,7 +78,6 @@ class AgentResult:
             "request": self.request,
             "steps": [step.to_dict() for step in self.steps],
             "stop": self.stop,
-            "decided_by": self.decided_by,
             "decision_thought": self.decision_thought,
             "decision": self.decision.model_dump(),
         }
@@ -105,7 +102,7 @@ def format_step(step: Step) -> str:
 def format_result(result: AgentResult) -> str:
     """Render the end of a run: who decided, why, the decision and the response."""
     decision = result.decision
-    decided_by = "model" if result.decided_by == "model" else f"agent ({result.stop})"
+    decided_by = "model" if result.stop == "decided" else f"agent ({result.stop})"
     lines = [
         "Final",
         f"  Thought: {result.decision_thought}",
