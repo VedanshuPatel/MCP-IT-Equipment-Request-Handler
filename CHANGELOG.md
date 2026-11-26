@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- OpenTelemetry (`telemetry.py`, REQUIREMENTS N4): with `OTEL_ENABLED=true`, the server and the agent print their spans to the console. The agent records `agent.run`, `agent.step`, `llm.generate`, `agent.reflection` and `agent.escalation`; the `mcp` library's client and server spans join the same trace, so one request is one trace across both processes. Spans carry only IDs, actions, decisions and codes; tests check that no request text, thought or response reaches a span.
+- Dependency: `opentelemetry-sdk`.
 - Reflection (`agent/reflection.py`, REQUIREMENTS 8): every draft that passes the output guardrails is reviewed by a separate model call through the strict `submit_review` tool (`confirmed`, or `revise` with issues). The verdict is the observation of the `submit_decision` step, so it shows in the trace; after one `revise` the agent gets one more attempt, and a second rejected draft escalates with `AGENT_ERROR`.
 - The agent and the reviewer share the same decision and response rules (`DECISION_RULES`, `RESPONSE_RULES` in `agent/prompts.py`).
 

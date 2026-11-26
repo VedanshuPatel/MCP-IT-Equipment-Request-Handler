@@ -2,7 +2,7 @@
 
 This document describes what is **built so far** and records the key decisions. It is updated as each phase is merged.
 
-_Last updated: Phase 10, reflection._
+_Last updated: Phase 11, observability._
 
 ## Current state
 
@@ -55,7 +55,7 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Repositories | `src/it_equipment/repositories.py` | `EmployeeRepository`, `PolicyRepository` and `EscalationRepository` protocols; JSON implementations for the mock data and a JSON Lines store for tickets (sequential IDs, lock for concurrent calls) |
 | Rules | `src/it_equipment/rules.py` | One class per eligibility rule (E1 to E6), `DEFAULT_RULES` in order, `evaluate()` (first decision wins), `add_years()` |
 | Tools | `src/it_equipment/tools.py` | `EquipmentTools`: the four tool methods, with injected repositories, date clock and UTC clock; no MCP code |
-| MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers with tool annotations (three read-only, one idempotent write); `main()` serves Streamable HTTP |
+| MCP server | `src/it_equipment/server.py` | `create_server()` registers the tools as thin wrappers with tool annotations (three read-only, one idempotent write); `main()` serves Streamable HTTP; with `OTEL_ENABLED=true`, prints the spans of each request |
 | Agent: LLM | `src/it_equipment/agent/llm.py` | `LLMClient` protocol (`next_call` returns one `ToolCall`); `FoundryLLM` sends the tools as strict functions with `tool_choice="required"` and no parallel calls, replays the steps so far as function calls and results, finds the call by type and moves `thought` out of the arguments |
 | Agent: MCP client | `src/it_equipment/agent/mcp_client.py` | `McpToolClient` wraps `mcp.Client`; every tool result becomes an `Observation` (`ok`, `data`, `text`) |
 | Agent: catalog | `src/it_equipment/agent/catalog.py` | Adapts the server's tool definitions (`list_tools`) into `ToolSpec`s: the server's argument schema plus a required `thought` argument; hides `ping`; keeps the read-only hint |
@@ -65,12 +65,13 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | Agent: trace | `src/it_equipment/agent/trace.py` | `Step` and `AgentResult`; console text (`format_step`, `format_result`) and JSON (`to_dict`) |
 | Agent: reflection | `src/it_equipment/agent/reflection.py` | `review_draft()`: the reviewer's separate model call with the strict `submit_review` tool; `review_observation()` turns the verdict into the observation of the `submit_decision` step |
 | Agent: prompts | `src/it_equipment/agent/prompts.py` | `AGENT_INSTRUCTIONS` and `REVIEW_INSTRUCTIONS`, built from the shared `DECISION_RULES` and `RESPONSE_RULES`; the `<request>` delimiters |
+| Telemetry | `src/it_equipment/telemetry.py` | `setup_telemetry()` installs a tracer provider that prints spans to the console when `OTEL_ENABLED` is true; `create_tracer_provider()` names the service. The agent's spans come from `react.py`, `llm.py` and `reflection.py` |
 | Agent settings | `src/it_equipment/config.py` | `FoundrySettings` (key hidden from `repr`), `agent_max_steps()` (`AGENT_MAX_STEPS`, default 8) and `load_env_file()` (`.env` never overrides real variables) |
 | Mock data | `data/employees.json`, `data/policies.json` | The 6 synthetic employees (REQUIREMENTS 2.3, 2.4) and the policy table (section 3) |
 | Clients | `scripts/run_agent.py`, `scripts/smoke_client.py`, `scripts/hello_client.py` | The agent on one request with a live trace; manual MCP checks: `get_employee_info` for given IDs, `ping` |
 | Unit tests | `tests/unit/` | Tools, repositories, rules, settings, server and agent parts; no network, today fixed to 2026-11-24 |
 | Agent tests | `tests/agent/` | The agent with a scripted model (`ScriptedLLM` in `conftest.py`) and the real server in-process |
-| Integration tests | `tests/integration/` | In-process MCP client tests, and end-to-end tests against the real server process |
+| Integration tests | `tests/integration/` | In-process MCP client tests, end-to-end tests against the real server process, and a check that the server's span is a child of the client's span across processes |
 | Live tests | `tests/live/` | Opt-in (`pytest -m live --no-cov`): the real Foundry model with the real server over HTTP; skipped without `FOUNDRY_*` settings; never run in CI |
 | CI | `.github/workflows/ci.yml` | Lint, format check and tests on Python 3.12 and 3.15 |
 | Config template | `.env.example` | Every setting planned across the phases |
@@ -124,3 +125,5 @@ scripts/smoke_client.py ──HTTP──►  server.py     thin @tool wrappers; 
 | AD-033 | 2026-11-26 | The agent always sends the employee's original text as the ticket's `request` | A reviewer reads the employee's own words, never the model's paraphrase |
 | AD-034 | 2026-11-26 | Reflection is a separate model call with its own instructions and a strict `submit_review` tool; it sees only the request, the recorded tool results and the draft | An independent check that judges the draft by the tool results, not by the agent's reasoning; the strict schema makes the verdict machine-readable |
 | AD-035 | 2026-11-26 | The review is the observation of the `submit_decision` step: `confirmed` ends the run, `revise` sends the issues back through the normal loop, and a second `revise` escalates with `AGENT_ERROR` | No separate revision code path; every verdict appears in the trace and in the agent's history; the run still ends within the step limit |
+| AD-036 | 2026-11-26 | Telemetry uses the OpenTelemetry SDK with a console exporter and a simple (synchronous) span processor, switched on per process by `OTEL_ENABLED`; the spans `mcp` already records are reused, not duplicated | Uses what the MCP library provides, so one request is one trace across agent and server; nothing to run besides the two processes; off by default so normal output stays readable; changing the backend means changing one exporter |
+| AD-037 | 2026-11-26 | Agent spans record only IDs, actions, decisions and codes (`agent.run`, `agent.step`, `llm.generate`, `agent.reflection`, `agent.escalation`); tests scan every span name, attribute, event and status for the request, thoughts and response | Traces are safe to share; the privacy rule is enforced by tests, not by convention |
