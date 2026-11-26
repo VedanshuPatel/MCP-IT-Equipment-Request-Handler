@@ -21,6 +21,9 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_DATA_DIR = "data"
 
+#: Model calls the agent may make per request (REQUIREMENTS G6).
+DEFAULT_AGENT_MAX_STEPS = 8
+
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
@@ -99,6 +102,29 @@ def data_dir(env: Mapping[str, str] | None = None) -> Path:
     """
     env = os.environ if env is None else env
     return Path(env.get("DATA_DIR", DEFAULT_DATA_DIR))
+
+
+def agent_max_steps(env: Mapping[str, str] | None = None) -> int:
+    """Return how many steps the agent may take per request, from ``AGENT_MAX_STEPS``.
+
+    Args:
+        env: Variables to read. Defaults to the process environment.
+
+    Returns:
+        The configured limit, or 8 when unset.
+
+    Raises:
+        ValueError: If the value is not a whole number of at least 1.
+    """
+    env = os.environ if env is None else env
+    raw = env.get("AGENT_MAX_STEPS", str(DEFAULT_AGENT_MAX_STEPS))
+    try:
+        steps = int(raw)
+    except ValueError:
+        raise ValueError(f"AGENT_MAX_STEPS must be an integer, got {raw!r}") from None
+    if steps < 1:
+        raise ValueError(f"AGENT_MAX_STEPS must be at least 1, got {steps}")
+    return steps
 
 
 def load_env_file(path: Path | None = None) -> bool:

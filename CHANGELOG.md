@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Guardrails (`agent/guardrails.py`, REQUIREMENTS 9): input checks G1 to G3 before any model call (empty or too long, no employee ID, prompt-injection phrases); step checks G5 (only offered tools) and G7 (one escalation per request); output checks G8 to G10 (an approval or denial needs a matching eligibility result, an escalation needs the ticket filed in this run).
+- Escalation as the safety default: a blocked request, two invalid model replies in a row (G4), the step limit (G6), a model that cannot be reached, or a draft that fails the output checks ends in an escalation filed by the agent's own code, with a ticket and a plain-language response. Every run now ends with a decision; the trace shows whether the model or the agent decided.
+- `LLMCallError`: a failed request to Foundry (connection, timeout, rate limit, authentication, server error) names the error and its cause, never the key.
+- `AGENT_MAX_STEPS` setting for the step limit (default 8).
+- The ticket of an escalation always holds the employee's original request text.
 - ReAct agent (`agent/react.py`): each step the model sees the request, the tools and every earlier step, and makes one tool call; tool errors and invalid decisions are shown to it as observations; the run ends with `submit_decision` or at the step limit (8).
 - `submit_decision`: an agent-local strict tool generated from the `Decision` model (REQUIREMENTS 6.1), with enums for the decision and the reason codes the model may give.
 - ReAct trace (`agent/trace.py`): Thought, Action and Observation per step plus the final decision, as console text and as JSON.

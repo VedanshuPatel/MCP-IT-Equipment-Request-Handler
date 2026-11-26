@@ -6,8 +6,9 @@ Usage::
     python scripts/run_agent.py                         # terminal 2: demo request 1
     python scripts/run_agent.py "Hi, I'm E003 and ..."  # any request
 
-Prints each step (Thought, Action, Observation) as it happens, then the final decision.
-Needs FOUNDRY_* in .env; the API key is never printed.
+Prints each step (Thought, Action, Observation) as it happens, then the final decision. A model
+that cannot be reached ends in an escalation, not a traceback. Needs FOUNDRY_* in .env; the
+API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8).
 """
 
 import sys
@@ -18,7 +19,7 @@ from it_equipment.agent.llm import FoundryLLM
 from it_equipment.agent.mcp_client import McpToolClient
 from it_equipment.agent.react import run_agent
 from it_equipment.agent.trace import Step, format_result, format_step
-from it_equipment.config import FoundrySettings, load_env_file, mcp_server_url
+from it_equipment.config import FoundrySettings, agent_max_steps, load_env_file, mcp_server_url
 
 #: Demo request 1 (REQUIREMENTS 11), used when no request is given.
 DEFAULT_REQUEST = (
@@ -39,7 +40,7 @@ async def main(request: str) -> None:
     async with McpToolClient(url) as mcp:
         print(f"Connected to {url}; model: {llm.model_name}")
         print(f"Request: {request}\n")
-        result = await run_agent(llm, mcp, request, on_step=print_step)
+        result = await run_agent(llm, mcp, request, max_steps=agent_max_steps(), on_step=print_step)
     print(format_result(result))
 
 

@@ -256,7 +256,7 @@ starts with one of these codes, followed by a colon and a short explanation.
 | `MISSING_EMPLOYEE_ID` | The request contains no employee ID |
 | `AMBIGUOUS_REQUEST` | The item is unclear, or the request asks for more than one item |
 | `GUARDRAIL_TRIGGERED` | A guardrail (section 9) blocked the request or the draft decision |
-| `AGENT_ERROR` | Tool error, invalid model output, step limit, or failing reflection twice |
+| `AGENT_ERROR` | Tool error, invalid or no model output, step limit, or failing reflection twice |
 
 For `MISSING_EMPLOYEE_ID`, `GUARDRAIL_TRIGGERED` and `AGENT_ERROR`, the agent's own code files the
 ticket, not the model, so these escalations work even when the model misbehaves. The ticket then

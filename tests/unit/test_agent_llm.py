@@ -20,6 +20,7 @@ from it_equipment.agent.llm import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_TIMEOUT_SECONDS,
     FoundryLLM,
+    LLMCallError,
     LLMError,
     ToolCall,
 )
@@ -195,6 +196,43 @@ def test_reply_must_hold_exactly_one_tool_call(foundry_llm, catalog, calls, coun
 def test_arguments_must_be_a_json_object(foundry_llm, catalog, arguments):
     with pytest.raises(LLMError, match="get_employee_info arguments are not a JSON object"):
         foundry_llm(("get_employee_info", arguments)).next_call("x", "y", catalog)
+
+
+@pytest.fixture
+def failing_llm() -> Callable[..., FoundryLLM]:
+    """Factory: ``failing_llm(handler)`` gives a ``FoundryLLM`` whose HTTP layer runs ``handler``.
+
+    The client makes no retries, so a failure surfaces at once.
+    """
+
+    def make(handler: Callable[[httpx2.Request], httpx2.Response]) -> FoundryLLM:
+        client = OpenAI(
+            base_url=ENDPOINT,
+            api_key="test-key",
+            max_retries=0,
+            http_client=httpx2.Client(transport=httpx2.MockTransport(handler)),
+        )
+        return FoundryLLM(client, "gpt-6-astra")
+
+    return make
+
+
+def test_unreachable_endpoint_raises_a_call_error_naming_the_cause(failing_llm, catalog):
+    def unreachable(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("[Errno 8] nodename nor servname provided, or not known")
+
+    with pytest.raises(LLMCallError, match=r"APIConnectionError: \[Errno 8\] nodename") as caught:
+        failing_llm(unreachable).next_call("x", "y", catalog)
+
+    assert "test-key" not in str(caught.value)
+
+
+def test_rejected_key_raises_a_call_error(failing_llm, catalog):
+    def rejected(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401, json={"error": {"message": "Access denied", "code": "401"}})
+
+    with pytest.raises(LLMCallError, match="gpt-6-astra request failed: AuthenticationError"):
+        failing_llm(rejected).next_call("x", "y", catalog)
 
 
 def test_from_settings_points_the_client_at_foundry_without_calling_it():

@@ -139,14 +139,15 @@ def server_url(server_data_dir) -> Iterator[str]:
 class ScriptedLLM:
     """A stand-in for the real model: returns prepared tool calls in order, records each request.
 
-    The real model is a network service, so agent tests use this to stay fast,
-    deterministic and free of API keys.
+    A prepared exception is raised instead of returned, to script invalid replies or a model
+    that cannot be reached. The real model is a network service, so agent tests use this to
+    stay fast, deterministic and free of API keys.
     """
 
     model_name = "scripted"
 
-    def __init__(self, calls: list[ToolCall]) -> None:
-        """Queue the tool calls to return, first one first."""
+    def __init__(self, calls: list[ToolCall | Exception]) -> None:
+        """Queue the tool calls (or exceptions) to return, first one first."""
         self._calls = list(calls)
         self.requests: list[tuple[str, str, list[ToolSpec], list[tuple[ToolCall, str]]]] = []
 
@@ -161,10 +162,13 @@ class ScriptedLLM:
         self.requests.append((instructions, prompt, list(tools), list(history)))
         if not self._calls:
             raise AssertionError("ScriptedLLM ran out of tool calls")
-        return self._calls.pop(0)
+        reply = self._calls.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 @pytest.fixture
 def scripted_llm() -> Callable[..., ScriptedLLM]:
-    """Factory: ``scripted_llm(call_1, call_2)`` builds a model that replays those calls."""
+    """Factory: ``scripted_llm(call_1, error, call_2)`` builds a model that replays those."""
     return lambda *calls: ScriptedLLM(list(calls))
