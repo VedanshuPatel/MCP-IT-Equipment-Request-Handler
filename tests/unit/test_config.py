@@ -10,6 +10,7 @@ from it_equipment.config import (
     agent_max_steps,
     data_dir,
     mcp_server_url,
+    otel_enabled,
 )
 
 
@@ -80,3 +81,15 @@ def test_agent_step_limit_comes_from_environment():
 def test_invalid_agent_step_limit_is_rejected(raw, message):
     with pytest.raises(ValueError, match=f"AGENT_MAX_STEPS {message}"):
         agent_max_steps({"AGENT_MAX_STEPS": raw})
+
+
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", " yes ", "on"])
+def test_telemetry_is_on_for_true_values(raw):
+    assert otel_enabled({"OTEL_ENABLED": raw}) is True
+
+
+@pytest.mark.parametrize(
+    "env", [{}, {"OTEL_ENABLED": "false"}, {"OTEL_ENABLED": "0"}, {"OTEL_ENABLED": ""}]
+)
+def test_telemetry_is_off_by_default_and_for_other_values(env):
+    assert otel_enabled(env) is False

@@ -5,8 +5,6 @@ from the real tools over the MCP protocol, and every escalation files a real tic
 temporary store.
 """
 
-from collections.abc import Awaitable, Callable
-
 import pytest
 
 from it_equipment.agent.llm import LLMCallError, LLMError, ToolCall
@@ -102,24 +100,6 @@ AGENT_TOOLS = [
     "flag_for_human_review",
     "submit_decision",
 ]
-
-
-@pytest.fixture
-def run_scripted(tools, scripted_llm) -> Callable[..., Awaitable]:
-    """Factory that runs the agent with a scripted model and the real server, in-process.
-
-    Usage: ``llm, result = await run_scripted(request, *calls, **options)``. The model replays
-    ``calls``; the server uses the tools fixture (today 2026-11-24, tickets in a temporary
-    folder).
-    """
-
-    async def run(request: str, *calls: ToolCall, **options) -> tuple:
-        llm = scripted_llm(*calls)
-        async with McpToolClient(create_server(tools)) as mcp:
-            result = await run_agent(llm, mcp, request, **options)
-        return llm, result
-
-    return run
 
 
 async def test_approves_demo_request_1_after_checking_eligibility(run_scripted):

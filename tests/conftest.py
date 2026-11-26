@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from it_equipment.repositories import (
     JsonEmployeeRepository,
@@ -110,10 +114,17 @@ def server_data_dir(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def server_url(server_data_dir) -> Iterator[str]:
+def server_env() -> dict[str, str]:
+    """Extra environment variables for the server process; a test module may override this."""
+    return {}
+
+
+@pytest.fixture(scope="module")
+def server_url(server_data_dir, server_env) -> Iterator[str]:
     """Run ``python -m it_equipment.server`` on a free port and yield its URL.
 
-    One server process per test module; it reads and writes ``server_data_dir``.
+    One server process per test module; it reads and writes ``server_data_dir`` and writes its
+    output to ``server.log`` there.
     """
     port = _free_port()
     env = {
@@ -121,19 +132,43 @@ def server_url(server_data_dir) -> Iterator[str]:
         "MCP_HOST": "127.0.0.1",
         "MCP_PORT": str(port),
         "DATA_DIR": str(server_data_dir),
+        **server_env,
     }
-    process = subprocess.Popen(
-        [sys.executable, "-m", "it_equipment.server"],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        _wait_until_listening(port, process)
-        yield f"http://127.0.0.1:{port}/mcp"
-    finally:
-        process.terminate()
-        process.wait(timeout=10)
+    with (server_data_dir / "server.log").open("w") as log:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "it_equipment.server"],
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _wait_until_listening(port, process)
+            yield f"http://127.0.0.1:{port}/mcp"
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+@pytest.fixture(scope="session")
+def span_exporter() -> InMemorySpanExporter:
+    """Installs a tracer provider that keeps every span of this test process in memory.
+
+    OpenTelemetry allows one global provider per process, so it is installed once, the first
+    time a test asks for ``spans``.
+    """
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
+
+
+@pytest.fixture
+def spans(span_exporter) -> Iterator[InMemorySpanExporter]:
+    """The spans recorded during this test: ``spans.get_finished_spans()``."""
+    span_exporter.clear()
+    yield span_exporter
+    span_exporter.clear()
 
 
 class ScriptedLLM:
