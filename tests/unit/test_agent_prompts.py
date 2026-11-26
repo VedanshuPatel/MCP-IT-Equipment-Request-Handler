@@ -12,6 +12,14 @@ def test_refresh_due_covers_a_replacement_not_an_extra_unit():
     ) in DECISION_RULES
 
 
+def test_a_filed_ticket_keeps_the_decision_an_escalation():
+    """The ticket is filed before the review and cannot be withdrawn (REQUIREMENTS 6.3)."""
+    assert (
+        "- A filed ticket cannot be withdrawn: once flag_for_human_review has returned a ticket, "
+        "the\n  decision is escalate with that ticket ID."
+    ) in DECISION_RULES
+
+
 def test_limit_reached_date_is_for_a_replacement_only():
     """Demo 2: E003 may never have a second monitor, so 2028-11-03 is not a date for one."""
     assert (
