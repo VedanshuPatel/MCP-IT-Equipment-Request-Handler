@@ -11,7 +11,10 @@ import pytest
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.trace import StatusCode
 
-from it_equipment.agent.llm import LLMError, ToolCall
+from it_equipment.agent.llm import FallbackLLM, LLMCallError, LLMError, ToolCall
+from it_equipment.agent.mcp_client import McpToolClient
+from it_equipment.agent.react import run_agent
+from it_equipment.server import create_server
 
 pytestmark = pytest.mark.anyio
 
@@ -158,3 +161,25 @@ async def test_no_span_holds_the_request_the_thoughts_or_the_response(run_script
         *(call.thought for call in (CHECK_E004, FLAG_E004, ESCALATE_E004, CONFIRMED)),
     ]
     assert [(phrase, text) for phrase in private for text in texts if phrase in text] == []
+
+
+async def test_model_span_records_when_the_fallback_answered(tools, scripted_llm, named):
+    """REQUIREMENTS N5: Foundry is unreachable, so the fallback model handles the whole run."""
+    outage = LLMCallError("gpt-6-astra request failed: APIConnectionError", outage=True)
+    primary = scripted_llm(outage, model_name="gpt-6-astra")
+    fallback = scripted_llm(
+        LOOKUP_E002, CHECK_E002, APPROVE_E002, CONFIRMED, model_name="open-model"
+    )
+
+    async with McpToolClient(create_server(tools)) as mcp:
+        result = await run_agent(FallbackLLM(primary, fallback), mcp, REQUEST_1)
+
+    assert result.stop == "decided"
+    generations = named("llm.generate")
+    assert [span.attributes["gen_ai.response.model"] for span in generations] == ["open-model"] * 4
+    assert generations[0].attributes["gen_ai.request.model"] == "gpt-6-astra"
+    assert [event.name for event in generations[0].events] == ["llm.fallback"]
+    assert dict(generations[0].events[0].attributes) == {
+        "llm.from": "gpt-6-astra",
+        "llm.to": "open-model",
+    }

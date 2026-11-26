@@ -9,18 +9,26 @@ Usage::
 Prints each step (Thought, Action, Observation) as it happens, then the final decision. A model
 that cannot be reached ends in an escalation, not a traceback. Needs FOUNDRY_* in .env; the
 API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8). With
-OTEL_ENABLED=true, the run's OpenTelemetry spans are printed too.
+OTEL_ENABLED=true, the run's OpenTelemetry spans are printed too. When Foundry is unreachable,
+rate-limited or failing, a hosted fallback model that needs no key takes over; the optional
+FALLBACK_ENDPOINT and FALLBACK_MODEL choose a different keyless model.
 """
 
 import sys
 
 import anyio
 
-from it_equipment.agent.llm import FoundryLLM
+from it_equipment.agent.llm import create_llm
 from it_equipment.agent.mcp_client import McpToolClient
 from it_equipment.agent.react import run_agent
 from it_equipment.agent.trace import Step, format_result, format_step
-from it_equipment.config import FoundrySettings, agent_max_steps, load_env_file, mcp_server_url
+from it_equipment.config import (
+    FallbackSettings,
+    FoundrySettings,
+    agent_max_steps,
+    load_env_file,
+    mcp_server_url,
+)
 from it_equipment.telemetry import setup_telemetry
 
 #: Demo request 1 (REQUIREMENTS 11), used when no request is given.
@@ -38,7 +46,7 @@ async def main(request: str) -> None:
     """Run the agent on ``request`` against the running MCP server."""
     load_env_file()
     setup_telemetry("it-equipment-agent")
-    llm = FoundryLLM.from_settings(FoundrySettings.from_env())
+    llm = create_llm(FoundrySettings.from_env(), FallbackSettings.from_env())
     url = mcp_server_url()
     async with McpToolClient(url) as mcp:
         print(f"Connected to {url}; model: {llm.model_name}")

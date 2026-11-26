@@ -340,8 +340,10 @@ escalated with `GUARDRAIL_TRIGGERED`.
   that links agent and server spans. Spans carry only IDs, actions, decisions and codes, never
   request text, prompts, model output or secrets.
 - **N5. Model fallback.** If the primary model (Microsoft Foundry) is unreachable, times out, is
-  rate limited or returns a server error, the agent can fall back to a local model. Configuration
-  errors, such as a wrong API key, are reported instead of hidden by the fallback.
+  rate limited or returns a server error, the agent falls back to a second, hosted model that needs
+  no API key and no download. Its model and endpoint have defaults and may be changed in the
+  settings; no secret is ever asked for. Configuration errors, such as a wrong Foundry key, are
+  reported instead of hidden by the fallback.
 - **N6. Quality.** Every push runs lint, format check and tests in CI, and branch coverage stays
   at or above 85%.
 

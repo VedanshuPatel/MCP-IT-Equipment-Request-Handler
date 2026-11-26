@@ -2,9 +2,12 @@
 
 The agent talks to any model through ``LLMClient``: instructions, the request, the tools and
 the steps so far in, exactly one ``ToolCall`` out. Every turn ends in a tool call, so there is
-no free text to parse. ``FoundryLLM`` implements it with native function calling on the
-Microsoft Foundry Responses API. A local fallback model plugs in later as another
-implementation.
+no free text to parse.
+
+- ``FoundryLLM``: Microsoft Foundry, native function calling on the Responses API.
+- ``ChatCompletionsLLM``: a hosted model on an OpenAI-compatible Chat Completions service,
+  called without an API key: the fallback. Nothing is downloaded and nothing is configured.
+- ``FallbackLLM``: Foundry first, the fallback when Foundry has an outage (REQUIREMENTS N5).
 """
 
 from __future__ import annotations
@@ -14,11 +17,19 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai import APIError, OpenAI
+from openai import (
+    APIConnectionError,
+    APIError,
+    InternalServerError,
+    Omit,
+    OpenAI,
+    RateLimitError,
+)
+from openai.types.chat import ChatCompletionMessageFunctionToolCall
 from opentelemetry import trace
 
 from it_equipment.agent.catalog import THOUGHT, ToolSpec
-from it_equipment.config import FoundrySettings
+from it_equipment.config import FallbackSettings, FoundrySettings
 
 _tracer = trace.get_tracer(__name__)
 
@@ -27,6 +38,10 @@ DEFAULT_TIMEOUT_SECONDS = 60.0
 
 #: Reply budget. Reasoning models spend part of it on hidden reasoning before the call.
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
+
+#: SDK errors a second model can work around: no connection or a timeout, a rate limit, or a
+#: server error. Every other error is a configuration problem (key, endpoint, model, request).
+_OUTAGES = (APIConnectionError, RateLimitError, InternalServerError)
 
 
 class LLMError(Exception):
@@ -37,7 +52,16 @@ class LLMCallError(Exception):
     """The request to the model failed: network, timeout, rate limit, authentication or server.
 
     The message names the error and its cause, never the API key.
+
+    Attributes:
+        outage: True when a second model could work around it (no connection, a timeout, a
+            rate limit, a server error); False for configuration errors such as a wrong key.
     """
+
+    def __init__(self, message: str, *, outage: bool = False) -> None:
+        """Keep the message and whether the problem is an outage."""
+        super().__init__(message)
+        self.outage = outage
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +135,15 @@ def _generate(
     attributes = {"gen_ai.request.model": llm.model_name}
     with _tracer.start_as_current_span("llm.generate", attributes=attributes) as span:
         call = llm.next_call(instructions, prompt, tools, history)
-        span.set_attribute("agent.action", call.tool)
+        span.set_attributes({"agent.action": call.tool, "gen_ai.response.model": llm.model_name})
         return call
+
+
+def create_llm(foundry: FoundrySettings, fallback: FallbackSettings) -> LLMClient:
+    """The agent's model: Foundry, with the keyless fallback model behind it."""
+    return FallbackLLM(
+        FoundryLLM.from_settings(foundry), ChatCompletionsLLM.from_settings(fallback)
+    )
 
 
 class FoundryLLM:
@@ -146,7 +177,10 @@ class FoundryLLM:
             A ready ``FoundryLLM``. No network call is made until ``next_call``.
         """
         client = OpenAI(
-            base_url=settings.endpoint, api_key=settings.api_key, timeout=timeout, max_retries=2
+            base_url=settings.endpoint,
+            api_key=settings.api_key,
+            timeout=timeout,
+            max_retries=settings.max_retries,
         )
         return cls(client, settings.deployment)
 
@@ -195,10 +229,7 @@ class FoundryLLM:
                 store=False,
             )
         except APIError as error:
-            cause = error.__cause__ or error
-            raise LLMCallError(
-                f"{self._deployment} request failed: {type(error).__name__}: {cause}"
-            ) from error
+            raise _call_error(self._deployment, error) from error
         calls = [item for item in response.output if item.type == "function_call"]
         if len(calls) != 1:
             raise LLMError(
@@ -232,12 +263,171 @@ def _input_items(prompt: str, history: History) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     for number, (call, output) in enumerate(history, start=1):
         call_id = f"call_{number}"
-        arguments = json.dumps({THOUGHT: call.thought, **call.arguments})
+        arguments = _with_thought(call)
         items.append(
             {"type": "function_call", "call_id": call_id, "name": call.tool, "arguments": arguments}
         )
         items.append({"type": "function_call_output", "call_id": call_id, "output": output})
     return items
+
+
+class ChatCompletionsLLM:
+    """A hosted model on an OpenAI-compatible Chat Completions service, called without a key.
+
+    The fallback: the model runs on the service, so nothing is downloaded, and requests carry
+    no ``Authorization`` header, so no key is needed. Strict schemas are not sent, because not
+    every service supports them; the agent's own checks still validate every call.
+
+    Args:
+        client: An ``openai.OpenAI`` client pointed at the service.
+        model: The model name to send.
+        max_tokens: Upper bound on the reply.
+    """
+
+    def __init__(
+        self, client: Any, model: str, max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+    ) -> None:
+        """Store the client and request settings."""
+        self._client = client
+        self._model = model
+        self._max_tokens = max_tokens
+
+    @classmethod
+    def from_settings(
+        cls, settings: FallbackSettings, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    ) -> ChatCompletionsLLM:
+        """Create the keyless client for the configured model; no network call is made yet.
+
+        The OpenAI client will not start without some key, so it gets a placeholder; every
+        request then omits the ``Authorization`` header, so the placeholder is never sent.
+        """
+        client = OpenAI(
+            base_url=settings.endpoint,
+            api_key="anonymous",
+            timeout=timeout,
+            max_retries=settings.max_retries,
+        )
+        return cls(client, settings.model)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model
+
+    def next_call(
+        self, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History = ()
+    ) -> ToolCall:
+        """Send one Chat Completions request and return the single tool call in the reply.
+
+        Raises:
+            LLMError: If the reply does not hold exactly one tool call, or the call's
+                arguments are not a JSON object.
+            LLMCallError: If the request fails.
+        """
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=_chat_messages(instructions, prompt, history),
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": spec.name,
+                            "description": spec.description,
+                            "parameters": spec.parameters,
+                        },
+                    }
+                    for spec in tools
+                ],
+                tool_choice="required",
+                max_tokens=self._max_tokens,
+                extra_headers={"Authorization": Omit()},
+            )
+        except APIError as error:
+            raise _call_error(self._model, error) from error
+        tool_calls = response.choices[0].message.tool_calls if response.choices else None
+        calls = [
+            call
+            for call in tool_calls or []
+            if isinstance(call, ChatCompletionMessageFunctionToolCall)
+        ]
+        if len(calls) != 1:
+            raise LLMError(f"{self._model} returned {len(calls)} tool calls, expected 1")
+        return _to_tool_call(calls[0].function.name, calls[0].function.arguments)
+
+
+class FallbackLLM:
+    """Foundry first, a second hosted model when Foundry has an outage (REQUIREMENTS N5).
+
+    Only an outage switches models: no connection, a timeout, a rate limit or a server error.
+    A configuration error, such as a wrong key, is raised, so it gets fixed instead of hidden.
+    After an outage the fallback answers for the rest of this client's life, so later steps do
+    not wait for Foundry's retries again.
+
+    Args:
+        primary: The model to try first.
+        fallback: The model to use once the primary has had an outage.
+    """
+
+    def __init__(self, primary: LLMClient, fallback: LLMClient) -> None:
+        """Start with the primary model."""
+        self._primary = primary
+        self._fallback = fallback
+        self._active = primary
+
+    @property
+    def model_name(self) -> str:
+        """The model answering now: the primary until an outage, then the fallback."""
+        return self._active.model_name
+
+    def next_call(
+        self, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History = ()
+    ) -> ToolCall:
+        """Ask the active model; switch to the fallback when the primary has an outage."""
+        if self._active is self._primary:
+            try:
+                return self._primary.next_call(instructions, prompt, tools, history)
+            except LLMCallError as error:
+                if not error.outage:
+                    raise
+                self._active = self._fallback
+                trace.get_current_span().add_event(
+                    "llm.fallback",
+                    {"llm.from": self._primary.model_name, "llm.to": self._fallback.model_name},
+                )
+        return self._fallback.next_call(instructions, prompt, tools, history)
+
+
+def _call_error(model: str, error: APIError) -> LLMCallError:
+    """Wrap an SDK error: name it and its cause, and say whether it is an outage."""
+    cause = error.__cause__ or error
+    message = f"{model} request failed: {type(error).__name__}: {cause}"
+    return LLMCallError(message, outage=isinstance(error, _OUTAGES))
+
+
+def _with_thought(call: ToolCall) -> str:
+    """A replayed call's arguments as JSON, with its ``thought`` put back first."""
+    return json.dumps({THOUGHT: call.thought, **call.arguments})
+
+
+def _chat_messages(instructions: str, prompt: str, history: History) -> list[dict[str, Any]]:
+    """The conversation in the Chat Completions format: rules, request, then calls and results."""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": prompt},
+    ]
+    for number, (call, output) in enumerate(history, start=1):
+        call_id = f"call_{number}"
+        function = {"name": call.tool, "arguments": _with_thought(call)}
+        messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": call_id, "type": "function", "function": function}],
+            }
+        )
+        messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+    return messages
 
 
 def _to_tool_call(name: str, raw_arguments: str) -> ToolCall:

@@ -179,10 +179,9 @@ class ScriptedLLM:
     stay fast, deterministic and free of API keys.
     """
 
-    model_name = "scripted"
-
-    def __init__(self, calls: list[ToolCall | Exception]) -> None:
+    def __init__(self, calls: list[ToolCall | Exception], model_name: str = "scripted") -> None:
         """Queue the tool calls (or exceptions) to return, first one first."""
+        self.model_name = model_name
         self._calls = list(calls)
         self.requests: list[tuple[str, str, list[ToolSpec], list[tuple[ToolCall, str]]]] = []
 
@@ -205,5 +204,5 @@ class ScriptedLLM:
 
 @pytest.fixture
 def scripted_llm() -> Callable[..., ScriptedLLM]:
-    """Factory: ``scripted_llm(call_1, error, call_2)`` builds a model that replays those."""
-    return lambda *calls: ScriptedLLM(list(calls))
+    """Factory: ``scripted_llm(call_1, error, call_2, model_name=...)`` replays those calls."""
+    return lambda *calls, model_name="scripted": ScriptedLLM(list(calls), model_name)
