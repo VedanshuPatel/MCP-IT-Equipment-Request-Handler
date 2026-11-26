@@ -313,10 +313,10 @@ and the model is never called.
 
 Step guardrails run on every model step.
 
-- **G4.** The model output is one JSON object with `thought`, `action` and `action_input`. One
+- **G4.** Each model reply is exactly one tool call whose arguments carry a `thought`. One
   repair retry is allowed; a second invalid output escalates with `AGENT_ERROR`.
-- **G5.** `action` is one of the four tools or `submit_decision`. Anything else returns an error
-  observation to the model.
+- **G5.** The tool called is one of the four tools or `submit_decision`. Anything else returns
+  an error observation to the model.
 - **G6.** A request takes at most `AGENT_MAX_STEPS` steps (default 8). Then: `AGENT_ERROR`.
 - **G7.** `flag_for_human_review` is called at most once per request. A second call returns an
   error observation.

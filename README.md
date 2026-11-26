@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 7, agent foundation: the MCP server is complete, and the agent connects to it and makes one model-chosen tool call through native function calling on Microsoft Foundry. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 8, ReAct agent: the agent investigates a request with the MCP tools, step by step (Thought, Action, Observation), and submits a decision. Guardrails and reflection come next. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -89,7 +89,7 @@ Settings (see `.env.example`):
 - `DATA_DIR`: where the server reads the mock data (`employees.json`, `policies.json`) and writes escalation tickets (`escalations.jsonl`). Default: `data`.
 - `MCP_SERVER_URL`: where the clients connect.
 
-### Agent: one tool call (Phase 7)
+### Agent: ReAct run
 
 Put your Foundry settings in `.env` (copy `.env.example`; `.env` is git-ignored):
 
@@ -102,8 +102,11 @@ FOUNDRY_DEPLOYMENT=<your-deployment>
 Then, with the server running in another terminal:
 
 ```bash
-python scripts/one_call_demo.py    # prints the model's Thought, its tool call (Action) and the result (Observation)
+python scripts/run_agent.py                                   # demo request 1
+python scripts/run_agent.py "Hi, I'm E003 and I'd like a second monitor."   # any request
 ```
+
+Each step prints as it happens (Thought, Action, Observation), followed by the final decision, its reason code and the response to the employee.
 
 The default test run never calls Foundry: it uses a scripted model and a mocked HTTP layer, so CI needs no key. To check against the real model, run the live tests (`pytest -m live --no-cov`, see above).
 
@@ -114,7 +117,7 @@ The default test run never calls Foundry: it uses a scripted model and a mocked 
 ├── .github/workflows/ci.yml   CI pipeline
 ├── data/                      employees.json, policies.json (mock data); escalations.jsonl (runtime, git-ignored)
 ├── docs/                      REQUIREMENTS.md, ARCHITECTURE.md
-├── scripts/                   one_call_demo.py (agent), smoke_client.py, hello_client.py (MCP clients)
+├── scripts/                   run_agent.py (agent), smoke_client.py, hello_client.py (MCP clients)
 ├── src/it_equipment/          application package (see docs/ARCHITECTURE.md)
 ├── tests/unit/                unit tests, no network
 ├── tests/integration/         MCP protocol tests: in-process and over real HTTP
