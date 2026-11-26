@@ -176,7 +176,7 @@ def _earliest_due_date(ctx: EligibilityContext) -> date:
 
 
 class RefreshDue:
-    """E5: at the maximum, but a unit is due, so it can be replaced."""
+    """E5: at the maximum, but a unit is due, so it can be replaced (but nothing added)."""
 
     def evaluate(self, ctx: EligibilityContext) -> EligibilityResult | None:
         """Decide ``eligible`` / ``REFRESH_DUE`` when the oldest unit is due."""
@@ -187,7 +187,8 @@ class RefreshDue:
             "eligible",
             "REFRESH_DUE",
             f"{ctx.employee_id} has the maximum of {ctx.policy.max_quantity} {ctx.item} "
-            f"units, and the oldest became due for replacement on {due.isoformat()}.",
+            f"units for the {ctx.role} role. The oldest became due for replacement on "
+            f"{due.isoformat()}, so it can be replaced, but no unit can be added.",
             held=len(ctx.held_dates),
             max_quantity=ctx.policy.max_quantity,
         )

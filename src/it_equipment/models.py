@@ -9,8 +9,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-#: Employee IDs are ``E`` followed by exactly 3 digits (REQUIREMENTS 2.2).
-EMPLOYEE_ID_PATTERN = r"^E\d{3}$"
+#: Employee IDs are ``E`` followed by exactly 3 ASCII digits (REQUIREMENTS 2.2).
+EMPLOYEE_ID_PATTERN = r"^E[0-9]{3}$"
 
 
 class EquipmentUnit(BaseModel):

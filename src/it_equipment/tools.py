@@ -51,7 +51,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-_EMPLOYEE_ID = re.compile(r"E\d{3}")
+_EMPLOYEE_ID = re.compile(r"E[0-9]{3}")
 
 
 def normalize_employee_id(raw: str) -> str:
@@ -248,8 +248,7 @@ class EquipmentTools:
         if not reason or len(reason) > MAX_REASON_LENGTH:
             raise InvalidInputError(f"reason must be 1 to {MAX_REASON_LENGTH} characters")
 
-        existing = self._escalations.find_open(normalized_id, request)
-        if existing is not None:
-            return EscalationResult(ticket_id=existing.ticket_id, status="open", duplicate=True)
-        ticket = self._escalations.create(normalized_id, request, reason, self._now())
-        return EscalationResult(ticket_id=ticket.ticket_id, status="open", duplicate=False)
+        ticket, created = self._escalations.find_or_create(
+            normalized_id, request, reason, self._now()
+        )
+        return EscalationResult(ticket_id=ticket.ticket_id, status="open", duplicate=not created)

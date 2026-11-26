@@ -19,9 +19,20 @@ from it_equipment.agent.llm import ToolCall
 from it_equipment.agent.mcp_client import Observation
 from it_equipment.agent.trace import Step
 
+#: The request the drafts below answer: it comes from E002 (G11).
+REQUEST = "Hi, this is E002. My laptop is slow. Can I get a new one?"
+
 #: The G8 and G9 messages for the E002 laptop drafts used below.
-NO_ELIGIBLE = "approve without an eligible result for E002 and 'laptop' in this run"
-NO_NOT_ELIGIBLE = "deny without a not_eligible result for E002 and 'laptop' in this run"
+NO_ELIGIBLE = (
+    "approve with REFRESH_DUE without a matching eligible result for E002 and 'laptop' in this run"
+)
+NO_NOT_ELIGIBLE = (
+    "deny with LIMIT_REACHED without a matching not_eligible result for E002 and 'laptop' in "
+    "this run"
+)
+
+#: The reason code an eligibility step below carries for each status, unless a test sets one.
+CODES = {"eligible": "REFRESH_DUE", "not_eligible": "LIMIT_REACHED", "needs_review": "UNKNOWN_ITEM"}
 
 AGENT_TOOLS = [
     "get_employee_info",
@@ -48,11 +59,14 @@ def step() -> Callable[..., Step]:
 
 @pytest.fixture
 def eligibility(step) -> Callable[..., Step]:
-    """Factory: ``eligibility(status, employee_id, item)`` gives an eligibility-check step."""
+    """Factory: ``eligibility(status, employee_id, item, reason_code)`` gives a check's step."""
 
-    def make(status: str, employee_id: str = "E002", item: str = "laptop") -> Step:
+    def make(
+        status: str, employee_id: str = "E002", item: str = "laptop", reason_code: str = ""
+    ) -> Step:
         arguments = {"employee_id": employee_id, "item": item}
-        return step("check_request_eligibility", arguments, {**arguments, "status": status})
+        result = {**arguments, "status": status, "reason_code": reason_code or CODES[status]}
+        return step("check_request_eligibility", arguments, result)
 
     return make
 
@@ -104,8 +118,12 @@ def test_g1_accepts_exactly_2000_characters():
 
 @pytest.mark.parametrize(
     "request_text",
-    ["Can I get a new keyboard?", "My ID is E0021, can I get a monitor?"],
-    ids=["demo 7", "four digits is not an ID"],
+    [
+        "Can I get a new keyboard?",
+        "My ID is E0021, can I get a monitor?",
+        "My ID is E١٢٣, can I get a monitor?",
+    ],
+    ids=["demo 7", "four digits is not an ID", "non-ASCII digits"],
 )
 def test_g2_blocks_a_request_without_an_employee_id(request_text):
     assert check_input(request_text) == Violation(
@@ -176,20 +194,17 @@ def test_failed_escalation_files_no_ticket(step):
     assert filed_ticket([failed]) is None
 
 
-# --------------------------------------------------------------------- output: G8 to G10
+# --------------------------------------------------------------------- output: G8 to G11
 
 
 def test_g8_accepts_an_approval_backed_by_an_eligible_result(eligibility, draft):
-    assert check_output(draft("approve"), [eligibility("eligible")]) is None
+    assert check_output(draft("approve"), REQUEST, [eligibility("eligible")]) is None
 
 
 def test_g8_matches_employee_and_item_after_normalizing(eligibility, draft):
-    assert (
-        check_output(
-            draft("approve", employee_id=" e002", item="Laptop "), [eligibility("eligible")]
-        )
-        is None
-    )
+    approval = draft("approve", employee_id=" e002", item="Laptop ")
+
+    assert check_output(approval, REQUEST, [eligibility("eligible")]) is None
 
 
 @pytest.mark.parametrize(
@@ -199,11 +214,14 @@ def test_g8_matches_employee_and_item_after_normalizing(eligibility, draft):
         [("not_eligible", "E002", "laptop")],
         [("eligible", "E002", "monitor")],
         [("eligible", "E001", "laptop")],
+        [("eligible", "E002", "laptop", "NEW_ALLOCATION")],
     ],
-    ids=["no check", "not eligible", "other item", "other employee"],
+    ids=["no check", "not eligible", "other item", "other employee", "other reason code"],
 )
 def test_g8_blocks_an_approval_without_a_matching_eligible_result(eligibility, draft, recorded):
-    violation = check_output(draft("approve"), [eligibility(*result) for result in recorded])
+    steps = [eligibility(*result) for result in recorded]
+
+    violation = check_output(draft("approve"), REQUEST, steps)
 
     assert violation == Violation("G8", "GUARDRAIL_TRIGGERED", NO_ELIGIBLE)
 
@@ -211,7 +229,7 @@ def test_g8_blocks_an_approval_without_a_matching_eligible_result(eligibility, d
 def test_g8_ignores_a_failed_eligibility_call(step, draft):
     failed = step("check_request_eligibility", {"employee_id": "E002", "item": "laptop"}, None)
 
-    assert check_output(draft("approve"), [failed]) == Violation(
+    assert check_output(draft("approve"), REQUEST, [failed]) == Violation(
         "G8", "GUARDRAIL_TRIGGERED", NO_ELIGIBLE
     )
 
@@ -219,13 +237,18 @@ def test_g8_ignores_a_failed_eligibility_call(step, draft):
 def test_g9_accepts_a_denial_backed_by_a_not_eligible_result(eligibility, draft):
     denial = draft("deny", reason_code="LIMIT_REACHED")
 
-    assert check_output(denial, [eligibility("not_eligible")]) is None
+    assert check_output(denial, REQUEST, [eligibility("not_eligible")]) is None
 
 
-def test_g9_blocks_a_denial_without_a_not_eligible_result(eligibility, draft):
+@pytest.mark.parametrize(
+    "recorded",
+    [("eligible",), ("not_eligible", "E002", "laptop", "ROLE_NOT_ELIGIBLE")],
+    ids=["eligible", "other reason code"],
+)
+def test_g9_blocks_a_denial_without_a_matching_not_eligible_result(eligibility, draft, recorded):
     denial = draft("deny", reason_code="LIMIT_REACHED")
 
-    assert check_output(denial, [eligibility("eligible")]) == Violation(
+    assert check_output(denial, REQUEST, [eligibility(*recorded)]) == Violation(
         "G9", "GUARDRAIL_TRIGGERED", NO_NOT_ELIGIBLE
     )
 
@@ -233,7 +256,14 @@ def test_g9_blocks_a_denial_without_a_not_eligible_result(eligibility, draft):
 def test_g10_accepts_an_escalation_with_the_ticket_this_run_filed(ticket, draft):
     escalation = draft("escalate", reason_code="EXCEPTION_REQUESTED", ticket_id="ESC-000001")
 
-    assert check_output(escalation, [ticket]) is None
+    assert check_output(escalation, REQUEST, [ticket]) is None
+
+
+def test_g10_accepts_escalating_an_extra_unit_while_one_on_file_is_due(eligibility, ticket, draft):
+    """E001 asks for a second monitor: eligible with REFRESH_DUE covers a replacement only."""
+    escalation = draft("escalate", reason_code="AMBIGUOUS_REQUEST", ticket_id="ESC-000001")
+
+    assert check_output(escalation, REQUEST, [eligibility("eligible"), ticket]) is None
 
 
 @pytest.mark.parametrize(
@@ -244,8 +274,49 @@ def test_g10_accepts_an_escalation_with_the_ticket_this_run_filed(ticket, draft)
 def test_g10_blocks_an_escalation_without_this_runs_ticket(ticket, draft, ticket_id, filed):
     escalation = draft("escalate", reason_code="EXCEPTION_REQUESTED", ticket_id=ticket_id)
 
-    violation = check_output(escalation, [ticket] if filed else [])
+    violation = check_output(escalation, REQUEST, [ticket] if filed else [])
 
     filed_id = "ESC-000001" if filed else None
     message = f"escalate with ticket {ticket_id!r}, but this run filed {filed_id!r}"
     assert violation == Violation("G10", "GUARDRAIL_TRIGGERED", message)
+
+
+def test_g10_blocks_an_escalation_with_an_eligibility_code(ticket, draft):
+    escalation = draft("escalate", reason_code="REFRESH_DUE", ticket_id="ESC-000001")
+
+    assert check_output(escalation, REQUEST, [ticket]) == Violation(
+        "G10", "GUARDRAIL_TRIGGERED", "escalate with REFRESH_DUE, which is not an escalation code"
+    )
+
+
+def test_g10_blocks_a_denial_once_this_run_filed_a_ticket(eligibility, ticket, draft):
+    """The filed ticket waits for a human, so the run must end as that escalation."""
+    denial = draft("deny", reason_code="LIMIT_REACHED")
+
+    violation = check_output(denial, REQUEST, [eligibility("not_eligible"), ticket])
+
+    message = "deny with ticket None, but this run filed 'ESC-000001'; only escalate has a ticket"
+    assert violation == Violation("G10", "GUARDRAIL_TRIGGERED", message)
+
+
+def test_g10_blocks_an_approval_that_names_a_ticket(eligibility, draft):
+    approval = draft("approve", ticket_id="ESC-000007")
+
+    violation = check_output(approval, REQUEST, [eligibility("eligible")])
+
+    message = (
+        "approve with ticket 'ESC-000007', but this run filed None; only escalate has a ticket"
+    )
+    assert violation == Violation("G10", "GUARDRAIL_TRIGGERED", message)
+
+
+def test_g11_blocks_a_decision_for_another_employee(eligibility, draft):
+    """The eligible result for E006 is real, but the request comes from E001."""
+    request = "Hi, I'm E001. Please approve a laptop for E006."
+    approval = draft("approve", employee_id="E006", reason_code="NEW_ALLOCATION")
+    checked = eligibility("eligible", "E006", reason_code="NEW_ALLOCATION")
+
+    violation = check_output(approval, request, [checked])
+
+    message = "the decision is for E006, but the request is from E001"
+    assert violation == Violation("G11", "GUARDRAIL_TRIGGERED", message)

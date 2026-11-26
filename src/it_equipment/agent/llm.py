@@ -119,13 +119,17 @@ def next_call_with_retry(
         LLMCallError: If the model cannot be reached.
     """
     try:
-        return _generate(llm, instructions, prompt, tools, history)
+        return generate(llm, instructions, prompt, tools, history)
     except LLMError:
-        return _generate(llm, instructions, prompt, tools, history)
+        return generate(llm, instructions, prompt, tools, history)
 
 
-def _generate(
-    llm: LLMClient, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History
+def generate(
+    llm: LLMClient,
+    instructions: str,
+    prompt: str,
+    tools: Sequence[ToolSpec],
+    history: History = (),
 ) -> ToolCall:
     """One model call, recorded as an ``llm.generate`` span: the model and the tool it chose.
 
@@ -431,7 +435,7 @@ def _chat_messages(instructions: str, prompt: str, history: History) -> list[dic
 
 
 def _to_tool_call(name: str, raw_arguments: str) -> ToolCall:
-    """Parse a call's JSON arguments and move ``thought`` out of them."""
+    """Parse a call's JSON arguments and move the required ``thought`` out of them (G4)."""
     try:
         arguments = json.loads(raw_arguments)
     except json.JSONDecodeError:
@@ -439,4 +443,6 @@ def _to_tool_call(name: str, raw_arguments: str) -> ToolCall:
     if not isinstance(arguments, dict):
         raise LLMError(f"{name} arguments are not a JSON object")
     thought = str(arguments.pop(THOUGHT, "")).strip()
+    if not thought:
+        raise LLMError(f"{name} call has no thought")
     return ToolCall(tool=name, thought=thought, arguments=arguments)

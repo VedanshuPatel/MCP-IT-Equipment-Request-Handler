@@ -159,7 +159,15 @@ async def _react_loop(
     prompt = request_block(request)
     revisions = 0
     for number in range(1, max_steps + 1):
-        with _tracer.start_as_current_span("agent.step", attributes={"agent.step": number}) as span:
+        # An escalation can end the run inside a step, and its reason may quote the model's
+        # draft, so the step span never records exceptions (REQUIREMENTS N4); the
+        # agent.escalation span records why the run stopped.
+        with _tracer.start_as_current_span(
+            "agent.step",
+            attributes={"agent.step": number},
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
             history = [(step.call, step.observation.text) for step in steps]
             call = next_call_with_retry(llm, AGENT_INSTRUCTIONS, prompt, tools, history)
             span.set_attribute("agent.action", call.tool)
@@ -178,7 +186,7 @@ async def _react_loop(
             except ValidationError as error:
                 _record(steps, Step(number, call, _rejected(call, error)), on_step)
                 continue
-            if violation := check_output(draft, steps):
+            if violation := check_output(draft, request, steps):
                 raise _Escalation("output_guardrail", violation.code, str(violation))
             review = review_draft(llm, request, steps, draft)
             _record(steps, Step(number, call, review_observation(call, review)), on_step)

@@ -1,6 +1,7 @@
-"""Unit tests for loading employee records from JSON."""
+"""Unit tests for the JSON repositories: employees, policies and escalation tickets."""
 
 import json
+import threading
 from datetime import UTC, datetime
 
 import pytest
@@ -46,6 +47,18 @@ def test_mock_data_lists_each_unit_separately(employee_repository):
     assert items.count("monitor") == 2
 
 
+def test_mock_data_uses_only_roles_and_items_from_the_policy_table(
+    mock_data_dir, policy_repository
+):
+    """The files are validated one by one at startup, so this test checks them together."""
+    employees = json.loads((mock_data_dir / "employees.json").read_text())
+
+    roles = {employee["role"] for employee in employees}
+    items = {unit["item"] for employee in employees for unit in employee.get("equipment", [])}
+    assert [role for role in roles if policy_repository.limits_for(role) is None] == []
+    assert items <= set(policy_repository.catalog())
+
+
 def test_unknown_id_returns_none(employee_repository):
     assert employee_repository.get("E999") is None
 
@@ -66,6 +79,7 @@ def test_duplicate_ids_are_rejected(tmp_path):
     "bad_field",
     [
         {"employee_id": "100"},
+        {"employee_id": "E\u0661\u0662\u0663"},
         {"hire_date": "not-a-date"},
         {"name": ""},
         {"unexpected": "field"},
@@ -171,18 +185,49 @@ def test_missing_escalation_file_means_no_tickets(tmp_path):
 
 def test_ticket_ids_continue_from_an_existing_file(tmp_path):
     path = tmp_path / "escalations.jsonl"
-    JsonlEscalationRepository(path).create("E001", "first", "UNKNOWN_ITEM: desk", CREATED)
+    JsonlEscalationRepository(path).find_or_create("E001", "first", "UNKNOWN_ITEM: desk", CREATED)
 
     reopened = JsonlEscalationRepository(path)
-    ticket = reopened.create("E002", "second", "UNKNOWN_ITEM: chair", CREATED)
+    ticket, created = reopened.find_or_create("E002", "second", "UNKNOWN_ITEM: chair", CREATED)
 
-    assert ticket.ticket_id == "ESC-000002"
+    assert (ticket.ticket_id, created) == ("ESC-000002", True)
     assert reopened.find_open("E001", "first").ticket_id == "ESC-000001"
+
+
+def test_identical_open_request_returns_its_ticket_and_writes_nothing(tmp_path):
+    path = tmp_path / "escalations.jsonl"
+    repository = JsonlEscalationRepository(path)
+    first, _ = repository.find_or_create("E001", "Can I get a desk?", "UNKNOWN_ITEM: desk", CREATED)
+
+    again, created = repository.find_or_create("E001", "Can I get a desk?", "other", CREATED)
+
+    assert (again, created) == (first, False)
+    assert len(path.read_text().splitlines()) == 1
+
+
+def test_identical_requests_at_the_same_time_share_one_ticket(tmp_path):
+    """The SDK runs tools in worker threads, so two identical calls can arrive together."""
+    repository = JsonlEscalationRepository(tmp_path / "escalations.jsonl")
+    start = threading.Barrier(8)
+    tickets = []
+
+    def flag() -> None:
+        start.wait()
+        ticket, _ = repository.find_or_create("E004", "same", "EXCEPTION_REQUESTED: x", CREATED)
+        tickets.append(ticket.ticket_id)
+
+    threads = [threading.Thread(target=flag) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert tickets == ["ESC-000001"] * 8
 
 
 def test_find_open_matches_employee_and_exact_request_only(tmp_path):
     repository = JsonlEscalationRepository(tmp_path / "escalations.jsonl")
-    repository.create("E001", "Can I get a desk?", "UNKNOWN_ITEM: desk", CREATED)
+    repository.find_or_create("E001", "Can I get a desk?", "UNKNOWN_ITEM: desk", CREATED)
 
     assert repository.find_open("E002", "Can I get a desk?") is None
     assert repository.find_open("E001", "can i get a desk?") is None
