@@ -81,7 +81,7 @@ def test_result_shows_the_final_thought_and_decision(ok_step, approval):
     assert format_result(result) == (
         "Final\n"
         "  Thought: Eligible, so I approve.\n"
-        "  Decision: approve (REFRESH_DUE)\n"
+        "  Decision: approve (REFRESH_DUE), decided by the model\n"
         "  Employee: E002, item: laptop\n"
         "  Response: Your laptop replacement is approved."
     )
@@ -96,10 +96,25 @@ def test_escalation_shows_its_ticket(ok_step, approval):
     assert "  Ticket: ESC-1\n" in format_result(result)
 
 
-def test_run_without_a_decision_says_why(ok_step, error_step):
-    result = AgentResult(REQUEST, (ok_step, error_step), "step_limit")
+def test_agent_escalation_says_who_decided_and_why(ok_step):
+    escalation = Decision(
+        employee_id="E002",
+        item=None,
+        decision="escalate",
+        reason_code="AGENT_ERROR",
+        response="Your request has been passed to a human reviewer.",
+        ticket_id="ESC-000001",
+    )
+    result = AgentResult(
+        REQUEST, (ok_step,), "step_limit", escalation, "G6: no decision in 8 steps", "agent"
+    )
 
-    assert format_result(result) == "No decision: the run stopped (step_limit) after 2 steps."
+    text = format_result(result)
+
+    assert "  Thought: G6: no decision in 8 steps\n" in text
+    assert "  Decision: escalate (AGENT_ERROR), decided by the agent (step_limit)\n" in text
+    assert "  Employee: E002, item: unknown\n" in text
+    assert "  Ticket: ESC-000001\n" in text
 
 
 def test_trace_is_saved_as_json(ok_step, error_step, approval):
@@ -109,6 +124,7 @@ def test_trace_is_saved_as_json(ok_step, error_step, approval):
 
     assert saved["request"] == REQUEST
     assert saved["stop"] == "decided"
+    assert saved["decided_by"] == "model"
     assert saved["decision"]["reason_code"] == "REFRESH_DUE"
     assert saved["decision_thought"] == "Approve."
     assert saved["steps"][0] == {
@@ -121,9 +137,3 @@ def test_trace_is_saved_as_json(ok_step, error_step, approval):
     }
     assert saved["steps"][1]["ok"] is False
     assert "EMPLOYEE_NOT_FOUND" in saved["steps"][1]["observation"]
-
-
-def test_trace_without_a_decision_saves_null(ok_step):
-    saved = AgentResult(REQUEST, (ok_step,), "step_limit").to_dict()
-
-    assert saved["decision"] is None

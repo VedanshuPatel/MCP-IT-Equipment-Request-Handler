@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from it_equipment.config import DEFAULT_SERVER_URL, ServerSettings, data_dir, mcp_server_url
+from it_equipment.config import (
+    DEFAULT_SERVER_URL,
+    ServerSettings,
+    agent_max_steps,
+    data_dir,
+    mcp_server_url,
+)
 
 
 def test_defaults_listen_on_localhost_port_8000():
@@ -57,3 +63,20 @@ def test_data_dir_defaults_to_data_folder():
 
 def test_data_dir_comes_from_environment(tmp_path):
     assert data_dir({"DATA_DIR": str(tmp_path)}) == tmp_path
+
+
+def test_agent_step_limit_defaults_to_8():
+    assert agent_max_steps({}) == 8
+
+
+def test_agent_step_limit_comes_from_environment():
+    assert agent_max_steps({"AGENT_MAX_STEPS": "12"}) == 12
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [("eight", "must be an integer"), ("0", "must be at least 1"), ("-3", "must be at least 1")],
+)
+def test_invalid_agent_step_limit_is_rejected(raw, message):
+    with pytest.raises(ValueError, match=f"AGENT_MAX_STEPS {message}"):
+        agent_max_steps({"AGENT_MAX_STEPS": raw})
