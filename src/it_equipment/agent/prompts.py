@@ -20,6 +20,8 @@ Decision table:
 - needs_review: escalate with its reason code (UNKNOWN_ITEM or EMPLOYEE_NOT_FOUND).
 - The item is unclear, or the request asks for more than one item: escalate with
   AMBIGUOUS_REQUEST.
+- A filed ticket cannot be withdrawn: once flag_for_human_review has returned a ticket, the
+  decision is escalate with that ticket ID.
 
 An exception is claimed when the request says the equipment is damaged or not working, lost or
 stolen, or needed for a medical or accessibility reason. Complaints about speed or age are not
