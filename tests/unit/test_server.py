@@ -1,6 +1,7 @@
 """Unit tests for the server module, without any network."""
 
 from mcp.server.mcpserver import MCPServer
+from opentelemetry import trace
 
 from it_equipment import server
 from it_equipment.config import ServerSettings
@@ -41,3 +42,15 @@ def test_main_reads_settings_from_environment(monkeypatch):
     server.main()
 
     assert calls[0]["port"] == 9002
+
+
+def test_main_switches_on_telemetry_for_the_server_when_enabled(monkeypatch):
+    installed = []
+    monkeypatch.setattr(trace, "set_tracer_provider", installed.append)
+    monkeypatch.setattr(MCPServer, "run", lambda self, **kwargs: None)
+    monkeypatch.setenv("OTEL_ENABLED", "true")
+
+    server.main(ServerSettings())
+
+    (provider,) = installed
+    assert provider.resource.attributes["service.name"] == "it-equipment-mcp-server"

@@ -27,9 +27,13 @@ from it_equipment.models import (
     EscalationResult,
     PolicyLimits,
 )
+from it_equipment.telemetry import setup_telemetry
 from it_equipment.tools import EquipmentTools
 
 SERVER_NAME = "it-equipment"
+
+#: How this process names itself in OpenTelemetry spans.
+SERVICE_NAME = "it-equipment-mcp-server"
 
 EmployeeIdArg = Annotated[
     str, Field(description="Employee ID: 'E' followed by 3 digits, for example 'E002'.")
@@ -143,10 +147,14 @@ def create_server(tools: EquipmentTools | None = None) -> MCPServer:
 def main(settings: ServerSettings | None = None) -> None:
     """Serve the MCP server over Streamable HTTP until the process is stopped.
 
+    With ``OTEL_ENABLED=true``, the spans the ``mcp`` library records for each request are
+    printed to the console.
+
     Args:
         settings: Where to listen. Defaults to ``ServerSettings.from_env()``.
     """
     settings = settings or ServerSettings.from_env()
+    setup_telemetry(SERVICE_NAME)
     create_server().run(
         transport="streamable-http",
         host=settings.host,

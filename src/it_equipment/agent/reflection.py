@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from typing import Literal
 
 from mcp.types import Tool, ToolAnnotations
+from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from it_equipment.agent.catalog import ToolSpec
@@ -25,6 +26,8 @@ from it_equipment.agent.trace import Step
 
 #: The name of the reviewer's only tool.
 SUBMIT_REVIEW = "submit_review"
+
+_tracer = trace.get_tracer(__name__)
 
 
 class Review(BaseModel):
@@ -69,7 +72,7 @@ def review_prompt(request: str, steps: Sequence[Step], draft: SubmittedDecision)
 def review_draft(
     llm: LLMClient, request: str, steps: Sequence[Step], draft: SubmittedDecision
 ) -> Review:
-    """Ask the reviewer for its verdict on a draft decision.
+    """Ask the reviewer for its verdict on a draft decision, inside an ``agent.reflection`` span.
 
     Args:
         llm: The model that reviews.
@@ -84,8 +87,18 @@ def review_draft(
         LLMError: If the reviewer's reply is invalid twice, or is not a valid review.
         LLMCallError: If the model cannot be reached.
     """
-    prompt = review_prompt(request, steps, draft)
-    call = next_call_with_retry(llm, REVIEW_INSTRUCTIONS, prompt, [SUBMIT_REVIEW_TOOL])
+    with _tracer.start_as_current_span("agent.reflection") as span:
+        prompt = review_prompt(request, steps, draft)
+        call = next_call_with_retry(llm, REVIEW_INSTRUCTIONS, prompt, [SUBMIT_REVIEW_TOOL])
+        review = _parse_review(call)
+        span.set_attributes(
+            {"agent.review.verdict": review.verdict, "agent.review.issues": len(review.issues)}
+        )
+        return review
+
+
+def _parse_review(call: ToolCall) -> Review:
+    """Check that the reviewer called its tool with a valid verdict."""
     if call.tool != SUBMIT_REVIEW:
         raise LLMError(f"the reviewer called {call.tool!r} instead of {SUBMIT_REVIEW}")
     try:

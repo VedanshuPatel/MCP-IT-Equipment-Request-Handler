@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 10, reflection: the ReAct agent investigates a request with the MCP tools inside guardrails, and a separate reviewer checks every draft decision before it becomes final. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** Phase 11, observability: the ReAct agent works inside guardrails with a reviewer for every draft, and each request can be followed as one OpenTelemetry trace across the agent and the MCP server. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
@@ -16,7 +16,7 @@ An internal IT equipment request handler, built in two parts:
 | Language | Python ≥ 3.12 |
 | MCP | `mcp` 2.x over Streamable HTTP |
 | LLM | Microsoft Foundry (OpenAI-compatible Responses API), with a small local model as fallback |
-| Observability | OpenTelemetry |
+| Observability | OpenTelemetry (SDK, console exporter); `mcp`'s built-in spans plus the agent's own |
 | Quality | pytest with coverage; ruff for lint, formatting and docstrings |
 | CI | GitHub Actions |
 
@@ -113,6 +113,17 @@ Guardrails (REQUIREMENTS section 9) surround the model. A request that is empty,
 Reflection (REQUIREMENTS section 8): every draft decision that passes the guardrails goes to a reviewer, a separate model call with its own instructions. It compares the draft with the tool results of the run and answers `confirmed`, or `revise` with the issues to fix, for example a promised delivery date. The verdict shows in the trace as the observation of the `submit_decision` step. After one `revise` the agent gets one more attempt; a second rejected draft is escalated.
 
 The default test run never calls Foundry: it uses a scripted model and a mocked HTTP layer, so CI needs no key. To check against the real model, run the live tests (`pytest -m live --no-cov`, see above).
+
+### Observability (OpenTelemetry)
+
+Set `OTEL_ENABLED=true` for the server and the agent, and each process prints its spans to the console as they finish:
+
+```bash
+OTEL_ENABLED=true python -m it_equipment.server     # terminal 1
+OTEL_ENABLED=true python scripts/run_agent.py       # terminal 2
+```
+
+One request is one trace across both processes. The agent records `agent.run` (the outcome), one `agent.step` per step, `llm.generate` per model call, `agent.reflection` per review and `agent.escalation` when its own code escalates. The `mcp` library adds an `MCP send ...` span for every request the agent sends and a matching span in the server, linked through the trace context it passes in each request. Spans carry only IDs, actions, decisions and codes, never request text, prompts, model output or secrets; tests check this. Telemetry is off by default.
 
 ## Project layout
 

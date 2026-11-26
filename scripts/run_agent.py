@@ -8,7 +8,8 @@ Usage::
 
 Prints each step (Thought, Action, Observation) as it happens, then the final decision. A model
 that cannot be reached ends in an escalation, not a traceback. Needs FOUNDRY_* in .env; the
-API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8).
+API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8). With
+OTEL_ENABLED=true, the run's OpenTelemetry spans are printed too.
 """
 
 import sys
@@ -20,6 +21,7 @@ from it_equipment.agent.mcp_client import McpToolClient
 from it_equipment.agent.react import run_agent
 from it_equipment.agent.trace import Step, format_result, format_step
 from it_equipment.config import FoundrySettings, agent_max_steps, load_env_file, mcp_server_url
+from it_equipment.telemetry import setup_telemetry
 
 #: Demo request 1 (REQUIREMENTS 11), used when no request is given.
 DEFAULT_REQUEST = (
@@ -35,6 +37,7 @@ def print_step(step: Step) -> None:
 async def main(request: str) -> None:
     """Run the agent on ``request`` against the running MCP server."""
     load_env_file()
+    setup_telemetry("it-equipment-agent")
     llm = FoundryLLM.from_settings(FoundrySettings.from_env())
     url = mcp_server_url()
     async with McpToolClient(url) as mcp:

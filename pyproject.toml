@@ -13,6 +13,7 @@ dependencies = [
     "mcp>=2.3",
     "openai>=3.58",
     "python-dotenv>=1.2",
+    "opentelemetry-sdk>=1.45",
 ]
 
 [project.optional-dependencies]
