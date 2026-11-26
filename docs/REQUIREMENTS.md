@@ -22,7 +22,8 @@ In scope:
 Out of scope:
 
 - Ordering, shipping or tracking equipment.
-- Authenticating the requester. The employee ID in the request is trusted.
+- Authenticating the requester. The first employee ID in the request is trusted, and a decision
+  for anyone else is escalated (G11).
 - Deciding requests for more than one item at once. These are escalated (section 6.3).
 
 ## 2. Data
@@ -43,7 +44,7 @@ reason only matters for deciding whether the employee claims an exception (secti
 
 | Field | Type | Rule |
 |---|---|---|
-| `employee_id` | string | `E` followed by exactly 3 digits, for example `E002` |
+| `employee_id` | string | `E` followed by exactly 3 digits (0-9), for example `E002` |
 | `name` | string | Synthetic full name |
 | `role` | string | `standard`, `engineer`, `manager` or `contractor` |
 | `hire_date` | date | Start of employment; used for tenure |
@@ -189,8 +190,10 @@ Errors: `INVALID_EMPLOYEE_ID` and `INVALID_INPUT`.
 | E6 | Held is at or above the maximum, and no unit is due | not_eligible | `LIMIT_REACHED` |
 
 The tool takes only the employee and the item, as SCOPE.md defines it, so it cannot tell an extra
-unit from an early replacement. Both cases return `LIMIT_REACHED`, and `next_eligible_date` tells
-the employee when a replacement becomes possible.
+unit from a replacement. When no unit is due, both cases return `LIMIT_REACHED`, and
+`next_eligible_date` tells the employee when a replacement becomes possible. When a unit is due,
+both cases return `REFRESH_DUE`, which allows a replacement only, so the agent escalates a request
+for an additional unit (6.2).
 
 ### 5.1 Eligibility test matrix (today = 2026-11-24)
 
@@ -224,8 +227,9 @@ Boundary cases:
 - **Input:** one free-text request. The employee identifies themselves with their employee ID in
   the text.
 - **Output:** a decision record with `employee_id`, `item`, `decision` (`approve`, `deny` or
-  `escalate`), `reason_code`, `response` (the message to the employee), `ticket_id` (escalations
-  only) and `evidence` (the tool results the decision relies on).
+  `escalate`), `reason_code`, `response` (the message to the employee) and `ticket_id`
+  (escalations only). The evidence behind the decision is the run's trace: every tool call and its
+  result (N3).
 
 ### 6.2 Decision table
 
@@ -234,9 +238,13 @@ The agent must call `check_request_eligibility` before it approves or denies any
 | Eligibility status | Exception claimed (6.4)? | Decision | reason_code |
 |---|---|---|---|
 | eligible | either | **approve** | `NEW_ALLOCATION` or `REFRESH_DUE` |
+| eligible (`REFRESH_DUE`), extra unit asked for | either | **escalate** | `AMBIGUOUS_REQUEST` |
 | not_eligible | no | **deny** | `LIMIT_REACHED` or `ROLE_NOT_ELIGIBLE` |
 | not_eligible | yes | **escalate** | `EXCEPTION_REQUESTED` |
 | needs_review | either | **escalate** | `UNKNOWN_ITEM` or `EMPLOYEE_NOT_FOUND` |
+
+`REFRESH_DUE` allows replacing a unit on file, not adding one, so the second row overrides the
+first when the employee asks for an additional unit (for example "a second monitor").
 
 SCOPE.md Part 4 says requests outside policy are escalated, while the scenario and Part 6 also
 include clear denials. This design denies only when the tool returns a definite `not_eligible`
@@ -254,7 +262,7 @@ starts with one of these codes, followed by a colon and a short explanation.
 | `UNKNOWN_ITEM` | The item is not in the catalog |
 | `EMPLOYEE_NOT_FOUND` | No employee has the given ID |
 | `MISSING_EMPLOYEE_ID` | The request contains no employee ID |
-| `AMBIGUOUS_REQUEST` | The item is unclear, or the request asks for more than one item |
+| `AMBIGUOUS_REQUEST` | Unclear item, several items, or an extra unit while only a refresh is due |
 | `GUARDRAIL_TRIGGERED` | A guardrail (section 9) blocked the request or the draft decision |
 | `AGENT_ERROR` | Tool error, invalid or no model output, step limit, or failing reflection twice |
 
@@ -282,14 +290,15 @@ The `response` is the message the employee reads.
 | R1 | The first sentence states the decision. |
 | R2 | The reason uses only facts from tool results, such as the role, limits and dates. |
 | R3 | It promises nothing the tools did not return: no delivery dates, models or prices. |
-| R4 | A denial with `LIMIT_REACHED` gives the `next_eligible_date`. |
+| R4 | A `LIMIT_REACHED` denial gives `next_eligible_date`: when a held unit can be replaced. |
 | R5 | An escalation gives the ticket ID and says a human reviewer will follow up. |
 | R6 | Plain language, at most 120 words, with no internal codes or JSON. |
 
 ## 8. Reflection
 
 Before a decision becomes final, a separate reviewing step compares the draft with the tool
-results recorded in this run and answers two questions:
+results recorded in this run, without seeing earlier drafts or verdicts, and answers two
+questions:
 
 1. Does the draft accurately reflect what the tools returned, and does the decision follow the
    decision table (6.2)?
@@ -306,15 +315,17 @@ Input guardrails run before any model call. If one fails, the request is escalat
 and the model is never called.
 
 - **G1.** The request is not empty and has at most 2,000 characters. Else `GUARDRAIL_TRIGGERED`.
-- **G2.** The request contains an employee ID (`E` plus 3 digits). Else `MISSING_EMPLOYEE_ID`.
+- **G2.** The request contains an employee ID (`E` plus 3 digits, 0-9). Else
+  `MISSING_EMPLOYEE_ID`.
 - **G3.** The request contains none of these phrases, ignoring case: "ignore previous
   instructions", "ignore all previous", "disregard the rules", "system prompt", "you are now",
   "auto-approve". Else `GUARDRAIL_TRIGGERED`.
 
 Step guardrails run on every model step.
 
-- **G4.** Each model reply is exactly one tool call whose arguments carry a `thought`. One
-  repair retry is allowed; a second invalid output escalates with `AGENT_ERROR`.
+- **G4.** Each model reply is exactly one tool call whose arguments carry a non-empty `thought`
+  (for the reviewer: a valid `submit_review` call). One repair retry is allowed; a second invalid
+  output escalates with `AGENT_ERROR`.
 - **G5.** The tool called is one of the four tools or `submit_decision`. Anything else returns
   an error observation to the model.
 - **G6.** A request takes at most `AGENT_MAX_STEPS` steps (default 8). Then: `AGENT_ERROR`.
@@ -324,16 +335,23 @@ Step guardrails run on every model step.
 Output guardrails check the draft decision before reflection. If one fails, the request is
 escalated with `GUARDRAIL_TRIGGERED`.
 
-- **G8.** `approve` requires an `eligible` result for the same employee and item in this run.
-- **G9.** `deny` requires a `not_eligible` result for the same employee and item in this run.
-- **G10.** `escalate` requires a ticket ID returned by `flag_for_human_review` in this run.
+- **G8.** `approve` requires an `eligible` result for the same employee and item in this run, with
+  the same reason code.
+- **G9.** `deny` requires a `not_eligible` result for the same employee and item in this run, with
+  the same reason code.
+- **G10.** `escalate` requires the ticket ID returned by `flag_for_human_review` in this run and an
+  escalation code (6.3). `approve` and `deny` carry no ticket, and are blocked once this run has
+  filed one, because a human is already waiting for it.
+- **G11.** The decision is for the employee ID in the request (2.1).
 
 ## 10. Non-functional requirements
 
 - **N1. Transport.** The server uses Streamable HTTP at `http://127.0.0.1:8000/mcp` by default,
   listens on 127.0.0.1 only, and keeps the SDK's DNS-rebinding protection on.
-- **N2. Configuration.** Settings come from environment variables or `.env` (template:
-  `.env.example`). Secrets are never committed.
+- **N2. Configuration.** Settings come from environment variables. The agent script also reads
+  `.env` (template: `.env.example`) without overriding real variables; the server and the client
+  scripts read only the environment, so the server never holds the Foundry key. Secrets are never
+  committed.
 - **N3. Traceability.** Every agent run prints a Thought / Action / Observation trace, the
   reflection verdicts and the final decision, and can save the trace as JSON.
 - **N4. Observability.** With `OTEL_ENABLED=true`, each request produces one OpenTelemetry trace
@@ -368,6 +386,9 @@ Extra cases:
    Expected: **escalate**, `GUARDRAIL_TRIGGERED`, without a model call.
 7. "Can I get a new keyboard?"
    Expected: **escalate**, `MISSING_EMPLOYEE_ID`, without a model call.
+8. "Hi, E001 here. Can I get a second monitor?"
+   Expected: **escalate**, `AMBIGUOUS_REQUEST`. E001's monitor is due for replacement, but the
+   standard role allows one monitor, so a second one is outside policy.
 
 ## 12. Acceptance criteria
 
@@ -399,7 +420,7 @@ MCP tools (Phases 3 to 6):
 
 Agent (Phases 7 to 13):
 
-- **AC-15** Demo requests 1 to 7 produce the expected decision and `reason_code`, and the
+- **AC-15** Demo requests 1 to 8 produce the expected decision and `reason_code`, and the
   response to request 2 gives 2028-11-03.
 - **AC-16** Requests 6 and 7 make no model call.
 - **AC-17** Every escalation has a ticket ID, and its response follows R5.
@@ -408,8 +429,9 @@ Agent (Phases 7 to 13):
 - **AC-19** A draft that promises something the tools did not return (for example a delivery
   date) gets `revise`. The second draft is confirmed, or the request is escalated with
   `AGENT_ERROR`.
-- **AC-20** A draft `approve` without an `eligible` result for the same employee and item is
-  blocked (G8) and escalated with `GUARDRAIL_TRIGGERED`.
+- **AC-20** A draft `approve` without an `eligible` result for the same employee, item and reason
+  code is blocked (G8) and escalated with `GUARDRAIL_TRIGGERED`. So is a decision for another
+  employee than the requester (G11), and an approval or denial after a ticket was filed (G10).
 - **AC-21** Two invalid model outputs in a row (G4), or reaching the step limit (G6), escalate
   with `AGENT_ERROR`.
 - **AC-22** With telemetry on, no span attribute contains the request text.

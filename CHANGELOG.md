@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Scripted agent tests for demo requests 2, 4 and 5, and for request 8 (E001 asks for a second monitor); a test that the two mock-data files agree on roles and items.
 - Model fallback (REQUIREMENTS N5): when Foundry is unreachable, times out, is rate-limited or returns a server error, `FallbackLLM` switches to `ChatCompletionsLLM`, a keyless client for a hosted model: by default `Qwen3.5-397B-A17B` on OVHcloud AI Endpoints in anonymous mode. No API key, no download and no new dependency; requests carry no `Authorization` header, and rate limits are waited out. The optional `FALLBACK_ENDPOINT`, `FALLBACK_MODEL` and `FALLBACK_MAX_RETRIES` (default 8) choose another keyless model and how long rate limits are waited out; no secret is ever asked for. Configuration errors, such as a wrong Foundry key, are still reported. The `llm.generate` span records which model answered and an `llm.fallback` event marks the switch.
 - `LLMCallError.outage` tells outages from configuration errors.
 - Optional `FOUNDRY_MAX_RETRIES` (default 2, so an outage switches to the fallback within seconds); `AGENT_MAX_STEPS`, `FOUNDRY_MAX_RETRIES` and `FALLBACK_MAX_RETRIES` share one parser, and a blank value keeps the default.
@@ -16,9 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Reflection (`agent/reflection.py`, REQUIREMENTS 8): every draft that passes the output guardrails is reviewed by a separate model call through the strict `submit_review` tool (`confirmed`, or `revise` with issues). The verdict is the observation of the `submit_decision` step, so it shows in the trace; after one `revise` the agent gets one more attempt, and a second rejected draft escalates with `AGENT_ERROR`.
 - The agent and the reviewer share the same decision and response rules (`DECISION_RULES`, `RESPONSE_RULES` in `agent/prompts.py`).
 
-### Changed
-
-- Simpler agent loop: inside a run, every escalation is raised as one internal exception and filed in one place, instead of a callable escalator class; the trace works out who decided from the stop reason, so `AgentResult.decided_by` is gone; the G8 and G9 check reads the eligibility results with a small helper.
 - Guardrails (`agent/guardrails.py`, REQUIREMENTS 9): input checks G1 to G3 before any model call (empty or too long, no employee ID, prompt-injection phrases); step checks G5 (only offered tools) and G7 (one escalation per request); output checks G8 to G10 (an approval or denial needs a matching eligibility result, an escalation needs the ticket filed in this run).
 - Escalation as the safety default: a blocked request, two invalid model replies in a row (G4), the step limit (G6), a model that cannot be reached, or a draft that fails the output checks ends in an escalation filed by the agent's own code, with a ticket and a plain-language response. Every run now ends with a decision; the trace shows whether the model or the agent decided.
 - `LLMCallError`: a failed request to Foundry (connection, timeout, rate limit, authentication, server error) names the error and its cause, never the key.
@@ -66,6 +64,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Dependencies have an upper bound below their next major version, so a major release cannot break CI without a code change.
+- The README says that the server and the client scripts read their settings from the environment only; `.env` is read by `scripts/run_agent.py`.
+- Simpler agent loop: inside a run, every escalation is raised as one internal exception and filed in one place, instead of a callable escalator class; the trace works out who decided from the stop reason, so `AgentResult.decided_by` is gone; the G8 and G9 check reads the eligibility results with a small helper.
+
 - End-to-end tests run the server on a temporary copy of `data/`, so escalations never touch the repository; `data/escalations.jsonl` is git-ignored.
 
 - REQUIREMENTS section 4: tool error text *contains* the error code, because the MCP SDK puts `Error executing tool <name>: ` in front of it.
+
+### Fixed
+
+- A request for an extra unit while a unit on file was due (for example a second monitor for E001) was approved. `REFRESH_DUE` now allows a replacement only: the agent and the reviewer escalate such a request with `AMBIGUOUS_REQUEST`, and the eligibility message says the unit can be replaced but none added. A `LIMIT_REACHED` denial gives its date as the date a unit can be replaced, never a date for an extra unit.
+- The output guardrails checked only the eligibility status. G8 and G9 now also require the same reason code as the eligibility result; G10 requires an escalation code, and once a ticket is filed the run can only end as that escalation (approvals and denials carry no ticket); the new G11 blocks a decision for anyone other than the employee who sent the request.
+- A draft blocked by an output guardrail could put the model's text into the `agent.step` span as an exception event; step spans no longer record exceptions (REQUIREMENTS N4).
+- The reviewer saw earlier drafts and their verdicts; it now sees only the tool results.
+- A model call without a `thought` was accepted; it is now an invalid reply and is retried (G4). A reviewer reply that is not a valid review is retried once too, instead of escalating at once.
+- `<` and `>` in a request are escaped, so the request cannot close its `<request>` tag.
+- Two identical escalations arriving at the same moment could create two tickets; the store now looks for an open ticket and appends a new one under one lock (`find_or_create`).
+- Employee IDs accept ASCII digits only (`\d` also matched digits from other scripts).
