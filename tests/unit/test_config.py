@@ -93,3 +93,7 @@ def test_telemetry_is_on_for_true_values(raw):
 )
 def test_telemetry_is_off_by_default_and_for_other_values(env):
     assert otel_enabled(env) is False
+
+
+def test_blank_agent_step_limit_keeps_the_default():
+    assert agent_max_steps({"AGENT_MAX_STEPS": " "}) == 8
