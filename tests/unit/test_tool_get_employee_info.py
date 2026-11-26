@@ -42,7 +42,9 @@ def test_unknown_employee_raises_not_found(tools):
         tools.get_employee_info("E999")
 
 
-@pytest.mark.parametrize("raw", ["12", "", "   ", "E12", "E0001", "X002", "E00A"])
+@pytest.mark.parametrize(
+    "raw", ["12", "", "   ", "E12", "E0001", "X002", "E00A", "E\u0661\u0662\u0663"]
+)
 def test_malformed_id_raises_invalid(tools, raw):
     """AC-04."""
     with pytest.raises(InvalidEmployeeIdError, match=r"^INVALID_EMPLOYEE_ID: "):

@@ -201,6 +201,17 @@ def test_arguments_must_be_a_json_object(foundry_llm, catalog, arguments):
         foundry_llm(("get_employee_info", arguments)).next_call("x", "y", catalog)
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    ['{"employee_id": "E002"}', '{"thought": "  ", "employee_id": "E002"}'],
+    ids=["missing", "blank"],
+)
+def test_call_without_a_thought_is_invalid(foundry_llm, catalog, arguments):
+    """G4: every call carries a thought, so a call without one is retried like any bad reply."""
+    with pytest.raises(LLMError, match="get_employee_info call has no thought"):
+        foundry_llm(("get_employee_info", arguments)).next_call("x", "y", catalog)
+
+
 @pytest.fixture
 def failing_llm() -> Callable[..., FoundryLLM]:
     """Factory: ``failing_llm(handler)`` gives a ``FoundryLLM`` whose HTTP layer runs ``handler``.

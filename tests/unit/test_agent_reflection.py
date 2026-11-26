@@ -122,8 +122,19 @@ def test_review_draft_asks_the_reviewer_with_only_its_own_tool(scripted_llm, eli
     assert history == []
 
 
-def test_review_draft_retries_once_after_an_invalid_reply(scripted_llm, draft):
-    llm = scripted_llm(LLMError("no tool call"), CONFIRMED)
+#: Replies that are tool calls but not valid reviews.
+WRONG_TOOL = ToolCall("submit_decision", "Oops.", {})
+UNKNOWN_VERDICT = ToolCall("submit_review", "Unsure.", {"verdict": "maybe", "issues": []})
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [LLMError("no tool call"), WRONG_TOOL, UNKNOWN_VERDICT],
+    ids=["no tool call", "wrong tool", "unknown verdict"],
+)
+def test_review_draft_retries_once_after_an_invalid_reply(scripted_llm, draft, invalid):
+    """G4 covers the reviewer too: an invalid reply or verdict gets one more attempt."""
+    llm = scripted_llm(invalid, CONFIRMED)
 
     assert review_draft(llm, REQUEST, [], draft).verdict == "confirmed"
     assert len(llm.requests) == 2
@@ -131,17 +142,14 @@ def test_review_draft_retries_once_after_an_invalid_reply(scripted_llm, draft):
 
 @pytest.mark.parametrize(
     ("reply", "message"),
-    [
-        (ToolCall("submit_decision", "Oops.", {}), "called 'submit_decision' instead"),
-        (ToolCall("submit_review", "Unsure.", {"verdict": "maybe", "issues": []}), "invalid"),
-    ],
-    ids=["wrong tool", "invalid verdict"],
+    [(WRONG_TOOL, "called 'submit_decision' instead"), (UNKNOWN_VERDICT, "invalid")],
+    ids=["wrong tool", "unknown verdict"],
 )
-def test_review_draft_rejects_a_reply_that_is_not_a_valid_review(
+def test_review_draft_rejects_two_replies_that_are_not_valid_reviews(
     scripted_llm, draft, reply, message
 ):
     with pytest.raises(LLMError, match=message):
-        review_draft(scripted_llm(reply), REQUEST, [], draft)
+        review_draft(scripted_llm(reply, reply), REQUEST, [], draft)
 
 
 def test_confirmed_review_becomes_a_short_observation():

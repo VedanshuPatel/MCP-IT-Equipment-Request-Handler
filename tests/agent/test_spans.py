@@ -77,6 +77,22 @@ def named(spans) -> Callable[[str], list[ReadableSpan]]:
     return lambda name: [span for span in spans.get_finished_spans() if span.name == name]
 
 
+@pytest.fixture
+def span_texts(spans) -> Callable[[], list[str]]:
+    """Factory: ``span_texts()`` gives every name, status, attribute and event value as text."""
+
+    def collect() -> list[str]:
+        texts = []
+        for span in spans.get_finished_spans():
+            texts += [span.name, span.status.description or ""]
+            texts += [str(value) for value in span.attributes.values()]
+            for event in span.events:
+                texts += [str(value) for value in event.attributes.values()]
+        return texts
+
+    return collect
+
+
 async def test_run_is_one_trace_with_steps_model_calls_and_mcp_calls(run_scripted, spans, named):
     await run_scripted(REQUEST_1, LOOKUP_E002, CHECK_E002, APPROVE_E002, CONFIRMED)
 
@@ -143,16 +159,11 @@ async def test_invalid_model_reply_marks_its_span_as_an_error(run_scripted, name
     assert failed.events[0].attributes["exception.type"].endswith("LLMError")
 
 
-async def test_no_span_holds_the_request_the_thoughts_or_the_response(run_scripted, spans):
+async def test_no_span_holds_the_request_the_thoughts_or_the_response(run_scripted, span_texts):
     """AC-22: the ticket call sends the whole request, yet no span may contain any of it."""
     await run_scripted(REQUEST_3, CHECK_E004, FLAG_E004, ESCALATE_E004, CONFIRMED)
 
-    texts = []
-    for span in spans.get_finished_spans():
-        texts += [span.name, span.status.description or ""]
-        texts += [str(value) for value in span.attributes.values()]
-        for event in span.events:
-            texts += [str(value) for value in event.attributes.values()]
+    texts = span_texts()
     private = [
         REQUEST_3,
         "spilled coffee",
@@ -161,6 +172,20 @@ async def test_no_span_holds_the_request_the_thoughts_or_the_response(run_script
         *(call.thought for call in (CHECK_E004, FLAG_E004, ESCALATE_E004, CONFIRMED)),
     ]
     assert [(phrase, text) for phrase in private for text in texts if phrase in text] == []
+
+
+async def test_no_span_holds_a_blocked_draft(run_scripted, span_texts):
+    """AC-22 on the escalation path: G8 blocks a draft whose item quotes the request."""
+    leaky = ToolCall(
+        "submit_decision",
+        "Approve it.",
+        {**APPROVE_E002.arguments, "item": "the laptop I spilled coffee on"},
+    )
+
+    _, result = await run_scripted(REQUEST_1, CHECK_E002, leaky)
+
+    assert result.stop == "output_guardrail"
+    assert [text for text in span_texts() if "spilled coffee" in text] == []
 
 
 async def test_model_span_records_when_the_fallback_answered(tools, scripted_llm, named):

@@ -48,6 +48,16 @@ def test_matches_the_requirements_test_matrix(
     assert result.message
 
 
+def test_refresh_due_allows_a_replacement_not_an_extra_unit(tools):
+    """E5: the employee still holds the maximum, so only the due unit can be replaced."""
+    result = tools.check_request_eligibility("E001", "monitor")
+
+    assert result.message == (
+        "E001 has the maximum of 1 monitor units for the standard role. The oldest became due "
+        "for replacement on 2026-01-10, so it can be replaced, but no unit can be added."
+    )
+
+
 @pytest.mark.parametrize(
     ("today", "status", "code"),
     [
