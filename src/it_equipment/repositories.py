@@ -101,14 +101,14 @@ class JsonPolicyRepository:
 class EscalationRepository(Protocol):
     """Storage for escalation tickets: the only data the tools write."""
 
-    def find_open(self, employee_id: str, request: str) -> EscalationTicket | None:
-        """Return the open ticket for this employee and exact request text, if any."""
-        ...
-
-    def create(
+    def find_or_create(
         self, employee_id: str, request: str, reason: str, created_at: datetime
-    ) -> EscalationTicket:
-        """Store a new open ticket with the next ticket ID and return it."""
+    ) -> tuple[EscalationTicket, bool]:
+        """Return the open ticket for this employee and exact request, or store a new one.
+
+        Returns:
+            The ticket, and True if this call created it.
+        """
         ...
 
 
@@ -116,8 +116,9 @@ class JsonlEscalationRepository:
     """Escalation tickets stored as one JSON object per line (JSON Lines).
 
     The file is created on the first ticket. Ticket IDs are sequential (``ESC-000001``,
-    ``ESC-000002``, ...), based on the number of tickets already stored. A lock makes
-    "read the next ID, then append" atomic for concurrent calls within one server process.
+    ``ESC-000002``, ...), based on the number of tickets already stored. One lock covers "look
+    for an open ticket, then append a new one", so concurrent calls within one server process
+    can neither share a ticket ID nor create two tickets for the same request.
 
     Args:
         path: Path to the file, for example ``data/escalations.jsonl``.
@@ -137,22 +138,23 @@ class JsonlEscalationRepository:
     def find_open(self, employee_id: str, request: str) -> EscalationTicket | None:
         """Return the open ticket for this employee and exact request text, if any."""
         with self._lock:
-            for ticket in self._tickets():
-                if (ticket.employee_id, ticket.request, ticket.status) == (
-                    employee_id,
-                    request,
-                    "open",
-                ):
-                    return ticket
-        return None
+            return _open_ticket(self._tickets(), employee_id, request)
 
-    def create(
+    def find_or_create(
         self, employee_id: str, request: str, reason: str, created_at: datetime
-    ) -> EscalationTicket:
-        """Store a new open ticket with the next ticket ID and return it."""
+    ) -> tuple[EscalationTicket, bool]:
+        """Return the open ticket for this employee and exact request, or store a new one.
+
+        Returns:
+            The ticket, and True if this call created it.
+        """
         with self._lock:
+            tickets = self._tickets()
+            existing = _open_ticket(tickets, employee_id, request)
+            if existing is not None:
+                return existing, False
             ticket = EscalationTicket(
-                ticket_id=f"ESC-{len(self._tickets()) + 1:06d}",
+                ticket_id=f"ESC-{len(tickets) + 1:06d}",
                 employee_id=employee_id,
                 request=request,
                 reason=reason,
@@ -160,4 +162,14 @@ class JsonlEscalationRepository:
             )
             with self._path.open("a", encoding="utf-8") as file:
                 file.write(ticket.model_dump_json() + "\n")
-        return ticket
+            return ticket, True
+
+
+def _open_ticket(
+    tickets: list[EscalationTicket], employee_id: str, request: str
+) -> EscalationTicket | None:
+    """The open ticket for this employee and exact request text among ``tickets``, if any."""
+    for ticket in tickets:
+        if (ticket.employee_id, ticket.request, ticket.status) == (employee_id, request, "open"):
+            return ticket
+    return None

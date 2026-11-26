@@ -3,8 +3,8 @@
 - Input (G1 to G3) run before any model call. A failure escalates at once.
 - Step (G5, G7) run on every tool call. A failure becomes an error observation, so the model
   can choose again.
-- Output (G8 to G10) check the drafted decision against what the tools returned in this run.
-  A failure escalates.
+- Output (G8 to G11) check the drafted decision against the decision table, the tools' results
+  in this run and the request. A failure escalates.
 
 G4 (one retry after an invalid reply) and G6 (the step limit) are enforced by the ReAct loop.
 Every check is plain code over the request and the recorded steps; none asks the model.
@@ -23,8 +23,8 @@ from it_equipment.agent.trace import Step
 #: The longest request the agent accepts (G1), the same limit as the escalation store's.
 MAX_REQUEST_LENGTH = 2000
 
-#: An employee ID anywhere in the request (G2): ``E`` and 3 digits, any case.
-EMPLOYEE_ID = re.compile(r"\bE\d{3}\b", re.IGNORECASE)
+#: An employee ID anywhere in the request (G2): ``E`` and 3 ASCII digits, any case.
+EMPLOYEE_ID = re.compile(r"\bE[0-9]{3}\b", re.IGNORECASE)
 
 #: Phrases that mark a prompt-injection attempt (G3), matched ignoring case.
 INJECTION_PHRASES = (
@@ -41,6 +41,14 @@ FLAG_FOR_HUMAN_REVIEW = "flag_for_human_review"
 
 #: The tool whose results G8 and G9 rely on.
 CHECK_REQUEST_ELIGIBILITY = "check_request_eligibility"
+
+#: The codes the model may escalate with (REQUIREMENTS 6.3); the others approve or deny.
+ESCALATION_CODES = {
+    "EXCEPTION_REQUESTED",
+    "UNKNOWN_ITEM",
+    "EMPLOYEE_NOT_FOUND",
+    "AMBIGUOUS_REQUEST",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,9 +129,9 @@ def check_step(call: ToolCall, allowed: Collection[str], steps: Sequence[Step]) 
     return None
 
 
-def _eligibility_statuses(steps: Sequence[Step], employee_id: str, item: str) -> set[str]:
-    """The statuses check_request_eligibility returned for this employee and item in this run."""
-    statuses = set()
+def _eligibility_results(steps: Sequence[Step], employee_id: str, item: str) -> set[tuple]:
+    """The (status, reason code) pairs check_request_eligibility returned in this run."""
+    results = set()
     for step in steps:
         result = step.observation.data or {}
         if (
@@ -131,32 +139,57 @@ def _eligibility_statuses(steps: Sequence[Step], employee_id: str, item: str) ->
             and result.get("employee_id") == employee_id
             and result.get("item") == item
         ):
-            statuses.add(result.get("status"))
-    return statuses
+            results.add((result.get("status"), result.get("reason_code")))
+    return results
 
 
-def check_output(decision: SubmittedDecision, steps: Sequence[Step]) -> Violation | None:
-    """Run G8 to G10: the draft decision must rest on what the tools returned in this run.
+def check_output(
+    decision: SubmittedDecision, request: str, steps: Sequence[Step]
+) -> Violation | None:
+    """Run G8 to G11: the draft must follow the decision table and rest on this run's results.
 
     Args:
         decision: The model's draft decision.
+        request: The employee's request, which names who is asking.
         steps: The steps of this run.
 
     Returns:
         The failed check, or None if the decision is backed by the recorded results.
     """
     employee_id = decision.employee_id.strip().upper()
+    requester = employee_id_in(request)
+    if employee_id != requester:
+        message = f"the decision is for {employee_id}, but the request is from {requester}"
+        return Violation("G11", "GUARDRAIL_TRIGGERED", message)
+
     item = decision.item.strip().lower()
-    statuses = _eligibility_statuses(steps, employee_id, item)
+    code = decision.reason_code
+    results = _eligibility_results(steps, employee_id, item)
     subject = f"{employee_id} and {item!r}"
-    if decision.decision == "approve" and "eligible" not in statuses:
-        message = f"approve without an eligible result for {subject} in this run"
+    if decision.decision == "approve" and ("eligible", code) not in results:
+        message = (
+            f"approve with {code} without a matching eligible result for {subject} in this run"
+        )
         return Violation("G8", "GUARDRAIL_TRIGGERED", message)
-    if decision.decision == "deny" and "not_eligible" not in statuses:
-        message = f"deny without a not_eligible result for {subject} in this run"
+    if decision.decision == "deny" and ("not_eligible", code) not in results:
+        message = (
+            f"deny with {code} without a matching not_eligible result for {subject} in this run"
+        )
         return Violation("G9", "GUARDRAIL_TRIGGERED", message)
+
     ticket = filed_ticket(steps)
-    if decision.decision == "escalate" and (ticket is None or decision.ticket_id != ticket):
+    if decision.decision != "escalate":
+        if ticket is None and not decision.ticket_id:  # a blank ticket_id means none
+            return None
+        message = (
+            f"{decision.decision} with ticket {decision.ticket_id!r}, but this run filed "
+            f"{ticket!r}; only escalate has a ticket"
+        )
+        return Violation("G10", "GUARDRAIL_TRIGGERED", message)
+    if ticket is None or decision.ticket_id != ticket:
         message = f"escalate with ticket {decision.ticket_id!r}, but this run filed {ticket!r}"
+        return Violation("G10", "GUARDRAIL_TRIGGERED", message)
+    if code not in ESCALATION_CODES:
+        message = f"escalate with {code}, which is not an escalation code"
         return Violation("G10", "GUARDRAIL_TRIGGERED", message)
     return None
