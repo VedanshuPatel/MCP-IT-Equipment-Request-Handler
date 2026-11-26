@@ -24,6 +24,9 @@ DEFAULT_DATA_DIR = "data"
 #: Model calls the agent may make per request (REQUIREMENTS G6).
 DEFAULT_AGENT_MAX_STEPS = 8
 
+#: Values of OTEL_ENABLED that switch telemetry on, compared ignoring case.
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
 
 @dataclass(frozen=True, slots=True)
 class ServerSettings:
@@ -125,6 +128,19 @@ def agent_max_steps(env: Mapping[str, str] | None = None) -> int:
     if steps < 1:
         raise ValueError(f"AGENT_MAX_STEPS must be at least 1, got {steps}")
     return steps
+
+
+def otel_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return whether OpenTelemetry spans should be exported, from ``OTEL_ENABLED``.
+
+    Args:
+        env: Variables to read. Defaults to the process environment.
+
+    Returns:
+        True for ``1``, ``true``, ``yes`` or ``on`` (any case); False when unset or anything else.
+    """
+    env = os.environ if env is None else env
+    return env.get("OTEL_ENABLED", "").strip().lower() in TRUE_VALUES
 
 
 def load_env_file(path: Path | None = None) -> bool:
