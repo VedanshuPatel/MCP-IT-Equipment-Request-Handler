@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from openai import OpenAI
+from openai import APIError, OpenAI
 
 from it_equipment.agent.catalog import THOUGHT, ToolSpec
 from it_equipment.config import FoundrySettings
@@ -28,6 +28,13 @@ DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 class LLMError(Exception):
     """The model's reply could not be used, for example it held no tool call."""
+
+
+class LLMCallError(Exception):
+    """The request to the model failed: network, timeout, rate limit, authentication or server.
+
+    The message names the error and its cause, never the API key.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,18 +143,25 @@ class FoundryLLM:
         Raises:
             LLMError: If the reply does not hold exactly one tool call, or the call's
                 arguments are not a JSON object.
-            openai.APIError: For connection, timeout, rate-limit, auth and server errors.
+            LLMCallError: If the request fails: connection, timeout, rate limit, auth or a
+                server error, after the SDK's retries.
         """
-        response = self._client.responses.create(
-            model=self._deployment,
-            instructions=instructions,
-            input=_input_items(prompt, history),
-            tools=[_function_tool(spec) for spec in tools],
-            tool_choice="required",
-            parallel_tool_calls=False,
-            max_output_tokens=self._max_output_tokens,
-            store=False,
-        )
+        try:
+            response = self._client.responses.create(
+                model=self._deployment,
+                instructions=instructions,
+                input=_input_items(prompt, history),
+                tools=[_function_tool(spec) for spec in tools],
+                tool_choice="required",
+                parallel_tool_calls=False,
+                max_output_tokens=self._max_output_tokens,
+                store=False,
+            )
+        except APIError as error:
+            cause = error.__cause__ or error
+            raise LLMCallError(
+                f"{self._deployment} request failed: {type(error).__name__}: {cause}"
+            ) from error
         calls = [item for item in response.output if item.type == "function_call"]
         if len(calls) != 1:
             raise LLMError(
