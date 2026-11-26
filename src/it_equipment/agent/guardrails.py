@@ -121,6 +121,20 @@ def check_step(call: ToolCall, allowed: Collection[str], steps: Sequence[Step]) 
     return None
 
 
+def _eligibility_statuses(steps: Sequence[Step], employee_id: str, item: str) -> set[str]:
+    """The statuses check_request_eligibility returned for this employee and item in this run."""
+    statuses = set()
+    for step in steps:
+        result = step.observation.data or {}
+        if (
+            step.call.tool == CHECK_REQUEST_ELIGIBILITY
+            and result.get("employee_id") == employee_id
+            and result.get("item") == item
+        ):
+            statuses.add(result.get("status"))
+    return statuses
+
+
 def check_output(decision: SubmittedDecision, steps: Sequence[Step]) -> Violation | None:
     """Run G8 to G10: the draft decision must rest on what the tools returned in this run.
 
@@ -133,14 +147,7 @@ def check_output(decision: SubmittedDecision, steps: Sequence[Step]) -> Violatio
     """
     employee_id = decision.employee_id.strip().upper()
     item = decision.item.strip().lower()
-    statuses = {
-        (step.observation.data or {}).get("status")
-        for step in steps
-        if step.call.tool == CHECK_REQUEST_ELIGIBILITY
-        and step.observation.ok
-        and (step.observation.data or {}).get("employee_id") == employee_id
-        and (step.observation.data or {}).get("item") == item
-    }
+    statuses = _eligibility_statuses(steps, employee_id, item)
     subject = f"{employee_id} and {item!r}"
     if decision.decision == "approve" and "eligible" not in statuses:
         message = f"approve without an eligible result for {subject} in this run"

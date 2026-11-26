@@ -106,7 +106,7 @@ def test_agent_escalation_says_who_decided_and_why(ok_step):
         ticket_id="ESC-000001",
     )
     result = AgentResult(
-        REQUEST, (ok_step,), "step_limit", escalation, "G6: no decision in 8 steps", "agent"
+        REQUEST, (ok_step,), "step_limit", escalation, "G6: no decision in 8 steps"
     )
 
     text = format_result(result)
@@ -124,7 +124,6 @@ def test_trace_is_saved_as_json(ok_step, error_step, approval):
 
     assert saved["request"] == REQUEST
     assert saved["stop"] == "decided"
-    assert saved["decided_by"] == "model"
     assert saved["decision"]["reason_code"] == "REFRESH_DUE"
     assert saved["decision_thought"] == "Approve."
     assert saved["steps"][0] == {

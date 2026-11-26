@@ -78,6 +78,25 @@ class LLMClient(Protocol):
         ...
 
 
+def next_call_with_retry(
+    llm: LLMClient,
+    instructions: str,
+    prompt: str,
+    tools: Sequence[ToolSpec],
+    history: History = (),
+) -> ToolCall:
+    """Ask for the next tool call, and ask once more after an invalid reply (REQUIREMENTS G4).
+
+    Raises:
+        LLMError: If the second reply is invalid too.
+        LLMCallError: If the model cannot be reached.
+    """
+    try:
+        return llm.next_call(instructions, prompt, tools, history)
+    except LLMError:
+        return llm.next_call(instructions, prompt, tools, history)
+
+
 class FoundryLLM:
     """A Microsoft Foundry deployment, called through the OpenAI Responses API.
 
