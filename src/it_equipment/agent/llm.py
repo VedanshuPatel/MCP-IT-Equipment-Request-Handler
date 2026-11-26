@@ -15,9 +15,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from openai import APIError, OpenAI
+from opentelemetry import trace
 
 from it_equipment.agent.catalog import THOUGHT, ToolSpec
 from it_equipment.config import FoundrySettings
+
+_tracer = trace.get_tracer(__name__)
 
 #: Seconds to wait for Foundry; the SDK's default read timeout is 10 minutes.
 DEFAULT_TIMEOUT_SECONDS = 60.0
@@ -92,9 +95,24 @@ def next_call_with_retry(
         LLMCallError: If the model cannot be reached.
     """
     try:
-        return llm.next_call(instructions, prompt, tools, history)
+        return _generate(llm, instructions, prompt, tools, history)
     except LLMError:
-        return llm.next_call(instructions, prompt, tools, history)
+        return _generate(llm, instructions, prompt, tools, history)
+
+
+def _generate(
+    llm: LLMClient, instructions: str, prompt: str, tools: Sequence[ToolSpec], history: History
+) -> ToolCall:
+    """One model call, recorded as an ``llm.generate`` span: the model and the tool it chose.
+
+    A failed call marks the span as an error with the exception's type and message, which
+    name the problem but never contain the prompt or the reply.
+    """
+    attributes = {"gen_ai.request.model": llm.model_name}
+    with _tracer.start_as_current_span("llm.generate", attributes=attributes) as span:
+        call = llm.next_call(instructions, prompt, tools, history)
+        span.set_attribute("agent.action", call.tool)
+        return call
 
 
 class FoundryLLM:

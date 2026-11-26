@@ -14,6 +14,10 @@ blocked request, a second invalid reply, the step limit, a model that cannot be 
 draft the output checks reject, or a second rejected draft all end in an escalation that the
 agent's own code files with ``flag_for_human_review``. A run therefore always ends with a
 decision.
+
+Each run is one OpenTelemetry trace: an ``agent.run`` span with one ``agent.step`` span per step.
+The model calls, the MCP calls (recorded by the ``mcp`` library, on both sides) and the review
+nest inside the step that made them. Spans carry IDs, actions, decisions and codes only.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from opentelemetry import trace
 from pydantic import ValidationError
 
 from it_equipment.agent.decision import (
@@ -66,6 +71,8 @@ _WHY = {
 
 OnStep = Callable[[Step], None] | None
 
+_tracer = trace.get_tracer(__name__)
+
 
 @dataclass
 class _Escalation(Exception):
@@ -96,6 +103,26 @@ async def run_agent(
     Returns:
         The trace and the final decision: the model's, or the agent's escalation.
     """
+    with _tracer.start_as_current_span("agent.run") as span:
+        result = await _run(llm, mcp, request, max_steps, on_step)
+        decision = result.decision
+        span.set_attributes(
+            {
+                "agent.stop": result.stop,
+                "agent.steps": len(result.steps),
+                "agent.employee_id": decision.employee_id,
+                "agent.decision": decision.decision,
+                "agent.reason_code": decision.reason_code,
+                "agent.ticket_id": decision.ticket_id or "",
+            }
+        )
+        return result
+
+
+async def _run(
+    llm: LLMClient, mcp: McpToolClient, request: str, max_steps: int, on_step: OnStep
+) -> AgentResult:
+    """Check the request, run the loop, and turn every failure into an agent escalation."""
     steps: list[Step] = []
     try:
         if violation := check_input(request):
@@ -132,33 +159,35 @@ async def _react_loop(
     prompt = request_block(request)
     revisions = 0
     for number in range(1, max_steps + 1):
-        history = [(step.call, step.observation.text) for step in steps]
-        call = next_call_with_retry(llm, AGENT_INSTRUCTIONS, prompt, tools, history)
-        if call.tool != SUBMIT_DECISION:
-            if problem := check_step(call, allowed, steps):
-                observation = Observation(
-                    call.tool, call.arguments, ok=False, data=None, text=problem
-                )
-            else:
-                observation = await mcp.call_tool(call.tool, _arguments_to_send(call, request))
-            _record(steps, Step(number, call, observation), on_step)
-            continue
+        with _tracer.start_as_current_span("agent.step", attributes={"agent.step": number}) as span:
+            history = [(step.call, step.observation.text) for step in steps]
+            call = next_call_with_retry(llm, AGENT_INSTRUCTIONS, prompt, tools, history)
+            span.set_attribute("agent.action", call.tool)
+            if call.tool != SUBMIT_DECISION:
+                if problem := check_step(call, allowed, steps):
+                    observation = Observation(
+                        call.tool, call.arguments, ok=False, data=None, text=problem
+                    )
+                else:
+                    observation = await mcp.call_tool(call.tool, _arguments_to_send(call, request))
+                _record(steps, Step(number, call, observation), on_step)
+                continue
 
-        try:
-            draft = SubmittedDecision.model_validate(call.arguments)
-        except ValidationError as error:
-            _record(steps, Step(number, call, _rejected(call, error)), on_step)
-            continue
-        if violation := check_output(draft, steps):
-            raise _Escalation("output_guardrail", violation.code, str(violation))
-        review = review_draft(llm, request, steps, draft)
-        _record(steps, Step(number, call, review_observation(call, review)), on_step)
-        if review.verdict == "confirmed":
-            return AgentResult(request, tuple(steps), "decided", draft, call.thought)
-        revisions += 1
-        if revisions > MAX_REVISIONS:
-            reason = "reflection: the revised draft was not confirmed either"
-            raise _Escalation("reflection", "AGENT_ERROR", reason)
+            try:
+                draft = SubmittedDecision.model_validate(call.arguments)
+            except ValidationError as error:
+                _record(steps, Step(number, call, _rejected(call, error)), on_step)
+                continue
+            if violation := check_output(draft, steps):
+                raise _Escalation("output_guardrail", violation.code, str(violation))
+            review = review_draft(llm, request, steps, draft)
+            _record(steps, Step(number, call, review_observation(call, review)), on_step)
+            if review.verdict == "confirmed":
+                return AgentResult(request, tuple(steps), "decided", draft, call.thought)
+            revisions += 1
+            if revisions > MAX_REVISIONS:
+                reason = "reflection: the revised draft was not confirmed either"
+                raise _Escalation("reflection", "AGENT_ERROR", reason)
     raise _Escalation("step_limit", "AGENT_ERROR", f"G6: no decision in {max_steps} steps")
 
 
@@ -200,13 +229,15 @@ async def _escalate(
     returns that ticket.
     """
     code, reason = escalation.code, escalation.reason
-    employee_id = employee_id_in(request)
-    arguments = {
-        "employee_id": employee_id,
-        "request": request[:MAX_REQUEST_LENGTH] if request.strip() else "(empty)",
-        "reason": f"{code}: {reason}"[:MAX_REASON_LENGTH],
-    }
-    observation = await mcp.call_tool(FLAG_FOR_HUMAN_REVIEW, arguments)
+    attributes = {"agent.stop": escalation.stop, "agent.reason_code": code}
+    with _tracer.start_as_current_span("agent.escalation", attributes=attributes):
+        employee_id = employee_id_in(request)
+        arguments = {
+            "employee_id": employee_id,
+            "request": request[:MAX_REQUEST_LENGTH] if request.strip() else "(empty)",
+            "reason": f"{code}: {reason}"[:MAX_REASON_LENGTH],
+        }
+        observation = await mcp.call_tool(FLAG_FOR_HUMAN_REVIEW, arguments)
     call = ToolCall(FLAG_FOR_HUMAN_REVIEW, f"(agent) {reason}", arguments)
     _record(steps, Step(len(steps) + 1, call, observation), on_step)
     ticket_id = (observation.data or {}).get("ticket_id") if observation.ok else None
