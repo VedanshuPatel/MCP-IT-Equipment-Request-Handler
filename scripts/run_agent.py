@@ -59,7 +59,7 @@ async def main(request: str) -> None:
         result = await run_agent(llm, mcp, request, max_steps=agent_max_steps(), on_step=print_step)
     print(format_result(result))
     if llm.model_name != started_with:
-        print(f"  Note: Foundry was unavailable, so {llm.model_name} answered the rest of the run.")
+        print(f"  Note: Foundry was unavailable, so the run switched to {llm.model_name}.")
 
 
 if __name__ == "__main__":

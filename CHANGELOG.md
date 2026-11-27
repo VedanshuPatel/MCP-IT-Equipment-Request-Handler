@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `scripts/run_agent.py` ends with a note when the fallback model took over during the run, so the model named in the header is never mistaken for the one that answered. Its docstring lists every setting it reads.
+- `scripts/run_agent.py` ends with a note when the run switched to the fallback model, so the model named in the header is never mistaken for the one that was used. Its docstring lists every setting it reads.
 
 - Response rule R7: every date in a response is written as `YYYY-MM-DD`, as the tools return it. The agent and the reviewer share the rule, so the reviewer sends back a draft that spells a date out ("November 3, 2028").
 - Scripted agent tests for demo requests 2, 4 and 5, and for request 8 (E001 asks for a second monitor); a test that the two mock-data files agree on roles and items.
