@@ -3625,20 +3625,18 @@ before the decision was submitted.
 \newpage
 \section{Reflection step catching or confirming a draft}
 
-Before a decision is final, a separate reviewer checks the draft against the tool results. Its
-verdict, \texttt{confirmed} or \texttt{revise} with the issues to fix, is the observation of the
-\texttt{submit\_decision} step.
-
-In the live run the reviewer returned \texttt{confirmed} with no issues for the drafts of requests 1
-and 3 (Figure~\ref{fig:reflection}). Each draft's reason code, dates and ticket number matched what
-the policy tools had returned, and neither promised anything beyond it. A \texttt{revise} verdict
-gives the agent one more attempt, and a second rejected draft ends in an escalation.
-
 \begin{figure}[H]
     \centering
     \screenshot{width=0.95\linewidth}{screenshots/08-reflection.png}
     \caption{Reflection reviewing a draft before it is final}
     \label{fig:reflection}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \screenshot{width=0.95\linewidth}{screenshots/08-reflection-revise.png}
+    \caption{Reflection catching a bad draft (\texttt{revise}) and confirming a correct one}
+    \label{fig:reflection-revise}
 \end{figure}
 
 % =============================================================================
