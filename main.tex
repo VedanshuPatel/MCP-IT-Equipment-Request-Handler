@@ -475,7 +475,8 @@ escalated with `GUARDRAIL_TRIGGERED`.
   scripts read only the environment, so the server never holds the Foundry key. Secrets are never
   committed.
 - **N3. Traceability.** Every agent run prints a Thought / Action / Observation trace, the
-  reflection verdicts and the final decision, and can save the trace as JSON.
+  reflection verdicts and the final decision. The run's result converts to JSON with
+  `AgentResult.to_dict()`; no file is written.
 - **N4. Observability.** With `OTEL_ENABLED=true`, each request produces one OpenTelemetry trace
   that links agent and server spans. Spans carry only IDs, actions, decisions and codes, never
   request text, prompts, model output or secrets.
@@ -489,7 +490,7 @@ escalated with `GUARDRAIL_TRIGGERED`.
 
 ## 11. Demo requests
 
-These requests are used in the live demo (Phase 13) and in the scripted agent tests.
+These requests are used in the live demo and in the scripted agent tests.
 
 1. "Hi, this is E002. My laptop is about 2.5 years old and really slow now. Can I get a new one?"
    Expected: **approve**, `REFRESH_DUE`.
@@ -542,7 +543,7 @@ MCP tools (Phases 3 to 6):
 - **AC-14** An MCP client connected over Streamable HTTP lists all four tools with input schemas
   and can call each one.
 
-Agent (Phases 7 to 13):
+Agent (Phases 7 to 12):
 
 - **AC-15** Demo requests 1 to 9 produce the expected decision and `reason_code`, and the
   response to request 2 gives 2028-11-03.
@@ -1981,10 +1982,14 @@ Usage::
 
 Prints each step (Thought, Action, Observation) as it happens, then the final decision. A model
 that cannot be reached ends in an escalation, not a traceback. Needs FOUNDRY_* in .env; the
-API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8). With
-OTEL_ENABLED=true, the run's OpenTelemetry spans are printed too. When Foundry is unreachable,
-rate-limited or failing, a hosted fallback model that needs no key takes over; the optional
-FALLBACK_ENDPOINT and FALLBACK_MODEL choose a different keyless model.
+API key is never printed. MCP_SERVER_URL sets the server (default http://127.0.0.1:8000/mcp)
+and AGENT_MAX_STEPS the step limit (default 8). With OTEL_ENABLED=true, the run's
+OpenTelemetry spans are printed too.
+
+When Foundry is unreachable, rate-limited or failing, a hosted fallback model that needs no key
+takes over, and the final block says so. The optional FALLBACK_ENDPOINT and FALLBACK_MODEL
+choose a different keyless model; FOUNDRY_MAX_RETRIES (default 2) and FALLBACK_MAX_RETRIES
+(default 8) set how often each model is retried.
 """
 
 import sys
@@ -2022,10 +2027,13 @@ async def main(request: str) -> None:
     llm = create_llm(FoundrySettings.from_env(), FallbackSettings.from_env())
     url = mcp_server_url()
     async with McpToolClient(url) as mcp:
-        print(f"Connected to {url}; model: {llm.model_name}")
+        started_with = llm.model_name
+        print(f"Connected to {url}; model: {started_with}")
         print(f"Request: {request}\n")
         result = await run_agent(llm, mcp, request, max_steps=agent_max_steps(), on_step=print_step)
     print(format_result(result))
+    if llm.model_name != started_with:
+        print(f"  Note: Foundry was unavailable, so the run switched to {llm.model_name}.")
 
 
 if __name__ == "__main__":
@@ -3587,7 +3595,7 @@ Table~\ref{tab:decisions} lists the final decision for each request, as printed 
 (Figure~\ref{fig:decisions}). All four match the expected outcomes in
 \texttt{docs/REQUIREMENTS.md} (section 11). The two escalations have different reasons: request~3
 is outside routine policy but claims a damage exception, and request~4 asks for an item that is
-not in the equipment catalogue. Each escalation filed a ticket through \texttt{flag\_for\_human\_review}
+not in the equipment catalog. Each escalation filed a ticket through \texttt{flag\_for\_human\_review}
 before the decision was submitted.
 
 \begin{table}[H]
@@ -3601,7 +3609,7 @@ before the decision was submitted.
 1 & Laptop replacement, manager (E002) & Approve & \texttt{REFRESH\_DUE}: the laptop issued 2024-05-20 became due for replacement on 2026-05-20; the approval replaces it and adds no unit. \\
 2 & Second monitor, standard employee (E003) & Deny & \texttt{LIMIT\_REACHED}: the standard role allows one monitor and E003 holds one; it can be replaced from 2028-11-03. \\
 3 & Spill-damaged laptop, engineer (E004) & Escalate & \texttt{EXCEPTION\_REQUESTED}: the laptop is not due for replacement until 2029-03-16, but the employee reports damage. Ticket \texttt{ESC-000001}. \\
-4 & Standing desk (E001) & Escalate & \texttt{UNKNOWN\_ITEM}: a standing desk is not in the catalogue (laptop, monitor, headset, keyboard). Ticket \texttt{ESC-000002}. \\
+4 & Standing desk (E001) & Escalate & \texttt{UNKNOWN\_ITEM}: a standing desk is not in the catalog (laptop, monitor, headset, keyboard). Ticket \texttt{ESC-000002}. \\
 \hline
 \end{tabular}
 \end{table}

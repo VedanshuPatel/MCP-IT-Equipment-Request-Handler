@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Live demo of requests 1 to 4 against Foundry: approve (`REFRESH_DUE`), deny (`LIMIT_REACHED`), and escalations with `EXCEPTION_REQUESTED` and `UNKNOWN_ITEM`, as REQUIREMENTS section 11 expects. The traces, decisions and reflection verdicts are in the submission report.
+- `scripts/run_agent.py` ends with a note when the run switched to the fallback model, so the model named in the header is never mistaken for the one that was used. Its docstring lists every setting it reads.
+
 - Response rule R7: every date in a response is written as `YYYY-MM-DD`, as the tools return it. The agent and the reviewer share the rule, so the reviewer sends back a draft that spells a date out ("November 3, 2028").
 - Scripted agent tests for demo requests 2, 4 and 5, and for request 8 (E001 asks for a second monitor); a test that the two mock-data files agree on roles and items.
 - A live test for request 9: a replacement that is due ("my monitor is getting old, can I get a new one?") is still approved.
@@ -66,6 +69,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- REQUIREMENTS N3 now matches the code: every run prints its trace, and the result converts to JSON with `AgentResult.to_dict()`; no file is written. The requirements no longer refer to a separate demo phase.
 - Dependencies have an upper bound below their next major version, so a major release cannot break CI without a code change.
 - The README says that the server and the client scripts read their settings from the environment only; `.env` is read by `scripts/run_agent.py`.
 - Simpler agent loop: inside a run, every escalation is raised as one internal exception and filed in one place, instead of a callable escalator class; the trace works out who decided from the stop reason, so `AgentResult.decided_by` is gone; the G8 and G9 check reads the eligibility results with a small helper.

@@ -7,7 +7,7 @@ An internal IT equipment request handler, built in two parts:
 - **MCP server.** Exposes a mock equipment system (employees, role policies, eligibility checks and escalation to human review) over **Streamable HTTP**.
 - **ReAct agent.** Reads a natural-language request, investigates it with the server's tools, reflects on its draft, and then **approves**, **denies** or **escalates** it to a human.
 
-> **Status:** Phase 12 plus review fixes: the ReAct agent works inside guardrails that enforce the decision table in code, has a reviewer for every draft, can be traced end to end, and switches to a hosted fallback model when Foundry has an outage. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
+> **Status:** The agent has been run live on the four demo requests: one approval, one denial and two escalations for different reasons, as REQUIREMENTS section 11 expects. The ReAct agent works inside guardrails that enforce the decision table in code, has a reviewer for every draft, can be traced end to end, and switches to a hosted fallback model when Foundry has an outage. The rules the system implements are in [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md); [CHANGELOG.md](CHANGELOG.md) lists what has been built so far.
 
 ## Tech stack
 
