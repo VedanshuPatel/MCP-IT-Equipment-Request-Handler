@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `requirements.txt`: the exact versions of every runtime and dev dependency (42 packages), frozen from a fresh install. CI and the README install from it, so every run uses the same tested set; `pyproject.toml` keeps the allowed ranges.
+
 - Live demo of requests 1 to 4 against Foundry: approve (`REFRESH_DUE`), deny (`LIMIT_REACHED`), and escalations with `EXCEPTION_REQUESTED` and `UNKNOWN_ITEM`, as REQUIREMENTS section 11 expects. The traces, decisions and reflection verdicts are in the submission report.
 - `scripts/run_agent.py` ends with a note when the run switched to the fallback model, so the model named in the header is never mistaken for the one that was used. Its docstring lists every setting it reads.
 

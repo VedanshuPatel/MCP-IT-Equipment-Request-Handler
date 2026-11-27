@@ -35,7 +35,8 @@ cd MCP-IT-Equipment-Request-Handler
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -r requirements.txt   # exact, tested versions (the same set CI uses)
+python -m pip install -e . --no-deps
 cp .env.example .env               # fill in values when a later phase needs them
 ```
 
