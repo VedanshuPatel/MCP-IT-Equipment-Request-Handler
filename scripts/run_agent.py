@@ -8,10 +8,14 @@ Usage::
 
 Prints each step (Thought, Action, Observation) as it happens, then the final decision. A model
 that cannot be reached ends in an escalation, not a traceback. Needs FOUNDRY_* in .env; the
-API key is never printed. AGENT_MAX_STEPS sets the step limit (default 8). With
-OTEL_ENABLED=true, the run's OpenTelemetry spans are printed too. When Foundry is unreachable,
-rate-limited or failing, a hosted fallback model that needs no key takes over; the optional
-FALLBACK_ENDPOINT and FALLBACK_MODEL choose a different keyless model.
+API key is never printed. MCP_SERVER_URL sets the server (default http://127.0.0.1:8000/mcp)
+and AGENT_MAX_STEPS the step limit (default 8). With OTEL_ENABLED=true, the run's
+OpenTelemetry spans are printed too.
+
+When Foundry is unreachable, rate-limited or failing, a hosted fallback model that needs no key
+takes over, and the final block says so. The optional FALLBACK_ENDPOINT and FALLBACK_MODEL
+choose a different keyless model; FOUNDRY_MAX_RETRIES (default 2) and FALLBACK_MAX_RETRIES
+(default 8) set how often each model is retried.
 """
 
 import sys
@@ -49,10 +53,13 @@ async def main(request: str) -> None:
     llm = create_llm(FoundrySettings.from_env(), FallbackSettings.from_env())
     url = mcp_server_url()
     async with McpToolClient(url) as mcp:
-        print(f"Connected to {url}; model: {llm.model_name}")
+        started_with = llm.model_name
+        print(f"Connected to {url}; model: {started_with}")
         print(f"Request: {request}\n")
         result = await run_agent(llm, mcp, request, max_steps=agent_max_steps(), on_step=print_step)
     print(format_result(result))
+    if llm.model_name != started_with:
+        print(f"  Note: Foundry was unavailable, so {llm.model_name} answered the rest of the run.")
 
 
 if __name__ == "__main__":
