@@ -3645,13 +3645,23 @@ gives the agent one more attempt, and a second rejected draft ends in an escalat
 \newpage
 \section{Passing pipeline run}
 
-The GitHub Actions run on \texttt{main}: lint, format check and tests on Python 3.12 and 3.15.
+Every push runs the CI workflow (\texttt{.github/workflows/ci.yml}) on GitHub Actions: the lint,
+the format check and the full test suite, including every unit test, on Python 3.12 and 3.15.
+Figure~\ref{fig:pipeline} shows both jobs passing on \texttt{main} at commit \texttt{be39994};
+Figure~\ref{fig:pipeline-runs} shows the most recent runs, all passing.
 
 \begin{figure}[H]
     \centering
     \screenshot{width=0.95\linewidth}{screenshots/09-pipeline.png}
-    \caption{GitHub Actions: lint, format check and tests passing}
+    \caption{Both CI jobs (Python 3.12 and 3.15) passing on \texttt{main} at commit \texttt{be39994}}
     \label{fig:pipeline}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \screenshot{width=0.95\linewidth}{screenshots/09-pipeline-runs.png}
+    \caption{GitHub Actions run history: the latest CI runs on \texttt{main} and on the pull request branch, all passing}
+    \label{fig:pipeline-runs}
 \end{figure}
 
 % =============================================================================
