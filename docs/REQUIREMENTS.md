@@ -359,7 +359,8 @@ escalated with `GUARDRAIL_TRIGGERED`.
   scripts read only the environment, so the server never holds the Foundry key. Secrets are never
   committed.
 - **N3. Traceability.** Every agent run prints a Thought / Action / Observation trace, the
-  reflection verdicts and the final decision, and can save the trace as JSON.
+  reflection verdicts and the final decision. The run's result converts to JSON with
+  `AgentResult.to_dict()`; no file is written.
 - **N4. Observability.** With `OTEL_ENABLED=true`, each request produces one OpenTelemetry trace
   that links agent and server spans. Spans carry only IDs, actions, decisions and codes, never
   request text, prompts, model output or secrets.
@@ -373,7 +374,7 @@ escalated with `GUARDRAIL_TRIGGERED`.
 
 ## 11. Demo requests
 
-These requests are used in the live demo (Phase 13) and in the scripted agent tests.
+These requests are used in the live demo and in the scripted agent tests.
 
 1. "Hi, this is E002. My laptop is about 2.5 years old and really slow now. Can I get a new one?"
    Expected: **approve**, `REFRESH_DUE`.
@@ -426,7 +427,7 @@ MCP tools (Phases 3 to 6):
 - **AC-14** An MCP client connected over Streamable HTTP lists all four tools with input schemas
   and can call each one.
 
-Agent (Phases 7 to 13):
+Agent (Phases 7 to 12):
 
 - **AC-15** Demo requests 1 to 9 produce the expected decision and `reason_code`, and the
   response to request 2 gives 2028-11-03.
