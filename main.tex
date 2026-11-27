@@ -413,6 +413,7 @@ The `response` is the message the employee reads.
 | R4 | A `LIMIT_REACHED` denial gives `next_eligible_date`: when a held unit can be replaced. |
 | R5 | An escalation gives the ticket ID and says a human reviewer will follow up. |
 | R6 | Plain language, at most 120 words, with no internal codes or JSON. |
+| R7 | Every date is written as `YYYY-MM-DD`, exactly as the tools return it. |
 
 ## 8. Reflection
 
@@ -423,7 +424,7 @@ questions:
 1. Does the draft accurately reflect what the tools returned, and does the decision follow the
    decision table (6.2)?
 2. Does the response avoid committing to anything the data does not confirm, and does it follow
-   rules R1 to R6?
+   rules R1 to R7?
 
 For an escalation, the ticket already exists (6.3), so the reviewer checks its reason code and
 response. The reviewer returns `confirmed`, or `revise` with a list of issues. After `revise`, the
@@ -2671,6 +2672,7 @@ The response to the employee:
   replaced, never as a date for an additional unit.
 - An escalation gives the ticket ID and says a human reviewer will follow up.
 - Plain language, at most 120 words, with no internal codes or JSON.
+- Write every date as YYYY-MM-DD, exactly as the tools return it, for example 2028-11-03.
 """
 
 AGENT_INSTRUCTIONS = f"""\
@@ -3581,7 +3583,12 @@ and the running MCP server. The four requests are requests 1--4 of \texttt{docs/
 \newpage
 \section{Final decision and response for each request, including escalation reasons}
 
-\pending{Phase 13. Fill in the table from the final decisions in the screenshots.}
+Table~\ref{tab:decisions} lists the final decision for each request, as printed by the live run
+(Figure~\ref{fig:decisions}). All four match the expected outcomes in
+\texttt{docs/REQUIREMENTS.md} (section 11). The two escalations have different reasons: request~3
+is outside routine policy but claims a damage exception, and request~4 asks for an item that is
+not in the equipment catalogue. Each escalation filed a ticket through \texttt{flag\_for\_human\_review}
+before the decision was submitted.
 
 \begin{table}[H]
 \centering
@@ -3591,10 +3598,10 @@ and the running MCP server. The four requests are requests 1--4 of \texttt{docs/
 \hline
 \textbf{\#} & \textbf{Request} & \textbf{Decision} & \textbf{Reason / escalation reason} \\
 \hline
-1 & Laptop replacement, manager & -- & -- \\
-2 & Second monitor, standard employee & -- & -- \\
-3 & Damaged laptop, engineer & -- & -- \\
-4 & Standing desk & -- & -- \\
+1 & Laptop replacement, manager (E002) & Approve & \texttt{REFRESH\_DUE}: the laptop issued 2024-05-20 became due for replacement on 2026-05-20; the approval replaces it and adds no unit. \\
+2 & Second monitor, standard employee (E003) & Deny & \texttt{LIMIT\_REACHED}: the standard role allows one monitor and E003 holds one; it can be replaced from 2028-11-03. \\
+3 & Spill-damaged laptop, engineer (E004) & Escalate & \texttt{EXCEPTION\_REQUESTED}: the laptop is not due for replacement until 2029-03-16, but the employee reports damage. Ticket \texttt{ESC-000001}. \\
+4 & Standing desk (E001) & Escalate & \texttt{UNKNOWN\_ITEM}: a standing desk is not in the catalogue (laptop, monitor, headset, keyboard). Ticket \texttt{ESC-000002}. \\
 \hline
 \end{tabular}
 \end{table}
@@ -3613,6 +3620,11 @@ and the running MCP server. The four requests are requests 1--4 of \texttt{docs/
 Before a decision is final, a separate reviewer checks the draft against the tool results. Its
 verdict, \texttt{confirmed} or \texttt{revise} with the issues to fix, is the observation of the
 \texttt{submit\_decision} step.
+
+In the live run the reviewer returned \texttt{confirmed} with no issues for the drafts of requests 1
+and 3 (Figure~\ref{fig:reflection}). Each draft's reason code, dates and ticket number matched what
+the policy tools had returned, and neither promised anything beyond it. A \texttt{revise} verdict
+gives the agent one more attempt, and a second rejected draft ends in an escalation.
 
 \begin{figure}[H]
     \centering

@@ -37,6 +37,7 @@ The response to the employee:
   replaced, never as a date for an additional unit.
 - An escalation gives the ticket ID and says a human reviewer will follow up.
 - Plain language, at most 120 words, with no internal codes or JSON.
+- Write every date as YYYY-MM-DD, exactly as the tools return it, for example 2028-11-03.
 """
 
 AGENT_INSTRUCTIONS = f"""\

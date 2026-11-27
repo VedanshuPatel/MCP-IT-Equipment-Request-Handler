@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Response rule R7: every date in a response is written as `YYYY-MM-DD`, as the tools return it. The agent and the reviewer share the rule, so the reviewer sends back a draft that spells a date out ("November 3, 2028").
 - Scripted agent tests for demo requests 2, 4 and 5, and for request 8 (E001 asks for a second monitor); a test that the two mock-data files agree on roles and items.
 - A live test for request 9: a replacement that is due ("my monitor is getting old, can I get a new one?") is still approved.
 - Model fallback (REQUIREMENTS N5): when Foundry is unreachable, times out, is rate-limited or returns a server error, `FallbackLLM` switches to `ChatCompletionsLLM`, a keyless client for a hosted model: by default `Qwen3.5-397B-A17B` on OVHcloud AI Endpoints in anonymous mode. No API key, no download and no new dependency; requests carry no `Authorization` header, and rate limits are waited out. The optional `FALLBACK_ENDPOINT`, `FALLBACK_MODEL` and `FALLBACK_MAX_RETRIES` (default 8) choose another keyless model and how long rate limits are waited out; no secret is ever asked for. Configuration errors, such as a wrong Foundry key, are still reported. The `llm.generate` span records which model answered and an `llm.fallback` event marks the switch.

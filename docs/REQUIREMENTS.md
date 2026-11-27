@@ -297,6 +297,7 @@ The `response` is the message the employee reads.
 | R4 | A `LIMIT_REACHED` denial gives `next_eligible_date`: when a held unit can be replaced. |
 | R5 | An escalation gives the ticket ID and says a human reviewer will follow up. |
 | R6 | Plain language, at most 120 words, with no internal codes or JSON. |
+| R7 | Every date is written as `YYYY-MM-DD`, exactly as the tools return it. |
 
 ## 8. Reflection
 
@@ -307,7 +308,7 @@ questions:
 1. Does the draft accurately reflect what the tools returned, and does the decision follow the
    decision table (6.2)?
 2. Does the response avoid committing to anything the data does not confirm, and does it follow
-   rules R1 to R6?
+   rules R1 to R7?
 
 For an escalation, the ticket already exists (6.3), so the reviewer checks its reason code and
 response. The reviewer returns `confirmed`, or `revise` with a list of issues. After `revise`, the
